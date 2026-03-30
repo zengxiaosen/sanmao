@@ -1,391 +1,1092 @@
-import { chatThreads, defaultProfile, mutualLikes, seedProfiles } from "./data.js";
-import {
-  getCandidatesForViewer,
-  getChatThread,
-  getDailyState,
-  incrementViews,
-  registerLike
-} from "./matchLogic.js";
 import { loadState, saveState } from "./storage.js";
 
 const DAILY_LIMIT = 30;
 
-function getToday() {
-  return new Date().toISOString().slice(0, 10);
+export function escapeHtml(value) {
+  return String(value ?? "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
 }
 
-function createInitialState() {
+export function escapeAttribute(value) {
+  return escapeHtml(value);
+}
+
+export function sanitizeImageUrl(value) {
+  if (!value) {
+    return "";
+  }
+
+  try {
+    const base = typeof window !== "undefined" ? window.location.origin : "http://localhost";
+    const url = new URL(String(value), base);
+    return ["http:", "https:"].includes(url.protocol) ? url.href : "";
+  } catch {
+    return "";
+  }
+}
+
+export function createInitialState() {
   return {
-    profile: { ...defaultProfile },
-    completedProfile: false,
-    daily: {
-      date: getToday(),
-      viewed: 0
+    auth: {
+      userId: null,
+      username: "",
+      authenticated: false,
+      checkingSession: true
     },
-    currentIndex: 0,
-    passedIds: [],
-    likedIds: [],
-    matchedIds: [],
-    activeChatId: null
+    ui: {
+      activeTab: "discover",
+      editingProfile: false,
+      activeMatchId: null,
+      usernameInput: "",
+      passwordInput: "",
+      usernameStatus: "",
+      usernameError: "",
+      authMode: "register",
+      profileError: "",
+      messageError: ""
+    },
+    local: {
+      viewedCount: 0,
+      skippedIds: []
+    },
+    draftMessage: "",
+    appData: null,
+    loading: false
   };
+}
+
+function safeText(value, fallback = "") {
+  return escapeHtml(value || fallback);
+}
+
+function safeImageAttr(value) {
+  return escapeAttribute(sanitizeImageUrl(value));
+}
+
+function safeTagList(value) {
+  return String(value || "")
+    .split("/")
+    .map((tag) => tag.trim())
+    .filter(Boolean)
+    .map((tag) => `<span>${escapeHtml(tag)}</span>`)
+    .join("");
+}
+
+async function apiFetch(path, options = {}) {
+  const response = await fetch(path, {
+    headers: {
+      "Content-Type": "application/json"
+    },
+    ...options
+  });
+
+  let payload = {};
+  try {
+    payload = await response.json();
+  } catch {
+    payload = {};
+  }
+
+  if (!response.ok) {
+    throw new Error(payload.error || "request_failed");
+  }
+
+  return payload;
 }
 
 export function mountApp(root) {
   let state = loadState(createInitialState());
-  state.daily = getDailyState(state.daily, getToday());
 
   function persist() {
     saveState(state);
   }
 
-  function getViewer() {
-    return {
-      id: state.profile.id,
-      gender: state.profile.gender
-    };
+  function setState(nextState) {
+    state = nextState;
+    persist();
+    renderApp();
   }
 
-  function getDeck() {
-    const excludedIds = new Set([...state.passedIds, ...state.likedIds]);
-    return getCandidatesForViewer(getViewer(), seedProfiles).filter(
-      (profile) => !excludedIds.has(profile.id)
+  async function refreshAppData() {
+    if (!state.auth.checkingSession && !state.auth.authenticated) {
+      return;
+    }
+
+    setState({
+      ...state,
+      loading: true,
+      ui: {
+        ...state.ui,
+        usernameError: "",
+        profileError: "",
+        messageError: ""
+      }
+    });
+
+    try {
+      const appData = await apiFetch("/api/state");
+      setState({
+        ...state,
+        appData,
+        loading: false,
+        auth: {
+          ...state.auth,
+          userId: appData.profile?.user_id ?? state.auth.userId,
+          authenticated: true,
+          checkingSession: false,
+          username: appData.profile?.username || state.auth.username
+        },
+        ui: {
+          ...state.ui,
+          activeMatchId:
+            state.ui.activeMatchId ||
+            (appData.matches[0] ? String(appData.matches[0].match_id) : null)
+        }
+      });
+    } catch (error) {
+      if (error.message === "unauthorized") {
+        setState({
+          ...createInitialState(),
+          ui: {
+            ...createInitialState().ui,
+            activeTab: state.ui.activeTab,
+            activeMatchId: state.ui.activeMatchId
+          },
+          local: state.local,
+          draftMessage: state.draftMessage,
+          auth: {
+            ...createInitialState().auth,
+            userId: null,
+            checkingSession: false
+          }
+        });
+        return;
+      }
+
+      setState({
+        ...state,
+        loading: false,
+        auth: {
+          ...state.auth,
+          checkingSession: false
+        },
+        ui: {
+          ...state.ui,
+          messageError: "加载数据失败"
+        }
+      });
+    }
+  }
+
+  function getRemainingCount() {
+    return Math.max(0, DAILY_LIMIT - state.local.viewedCount);
+  }
+
+  function getDiscoverProfiles() {
+    if (!state.appData) {
+      return [];
+    }
+
+    const skipped = new Set(state.local.skippedIds);
+    return state.appData.discover.filter((profile) => !skipped.has(profile.user_id));
+  }
+
+  function getCurrentDiscoverProfile() {
+    return getDiscoverProfiles()[0] || null;
+  }
+
+  function getActiveMatch() {
+    if (!state.appData || !state.appData.matches.length) {
+      return null;
+    }
+
+    return (
+      state.appData.matches.find(
+        (match) => String(match.match_id) === String(state.ui.activeMatchId)
+      ) || state.appData.matches[0]
     );
-  }
-
-  function getCurrentCard() {
-    const deck = getDeck();
-    return deck[0] || null;
   }
 
   function renderHero() {
     return `
       <section class="hero">
-        <div class="eyebrow">Sanmao</div>
-        <h1>给刚毕业、在深圳打拼的人，做一个干净一点的相遇入口。</h1>
-        <p>假数据演示版，完整体验资料填写、刷卡、匹配和聊天闭环。</p>
+        <div class="eyebrow">Sanmao / SQLite MVP</div>
+        <div class="hero-grid">
+          <div>
+            <h1>先留一个名字，剩下的慢慢来。</h1>
+            <p>现在这版已经开始接真实数据库。先注册或登录用户名就能进入，只有真正要聊天时，才要求补全完整资料。</p>
+          </div>
+          <div class="hero-note">
+            <div class="section-label">CURRENT FLOW</div>
+            <strong>用户名先行，资料后补。</strong>
+            <p>发现、喜欢、消息、我的四个页签现在会按各自主题独立展示，不再互相夹杂。</p>
+          </div>
+        </div>
       </section>
     `;
   }
 
-  function renderProfileForm() {
-    const profile = state.profile;
+  function renderAuth() {
+    const isLogin = state.ui.authMode === "login";
 
     return `
-      <section class="panel onboarding">
+      <section class="panel onboarding app-card">
         <div class="panel-head">
           <div>
             <div class="section-label">STEP 1</div>
-            <h2>先填一份自己的资料</h2>
+            <h2>${isLogin ? "直接登录" : "先取一个用户名"}</h2>
+            <p class="panel-copy">${
+              isLogin
+                ? "如果这个用户名已经注册过，直接登录继续使用。"
+                : "先用用户名进入，后面真要聊天再补完整资料。"
+            }</p>
           </div>
-          <div class="pill">演示版资料只保存在你的浏览器</div>
+          <div class="pill">后端 session 会记住你的登录状态</div>
         </div>
-        <form id="profile-form" class="profile-form">
-          <label>昵称<input name="name" value="${profile.name}" placeholder="例如：阿泽" required></label>
-          <label>年龄<input name="age" type="number" min="18" max="40" value="${profile.age}" placeholder="23" required></label>
-          <label>性别
-            <select name="gender">
-              <option value="male" ${profile.gender === "male" ? "selected" : ""}>男生</option>
-              <option value="female" ${profile.gender === "female" ? "selected" : ""}>女生</option>
-            </select>
+        <div class="auth-toggle-row">
+          <button type="button" class="ghost-button ${isLogin ? "" : "active"}" data-action="set-auth-mode" data-auth-mode="register">注册</button>
+          <button type="button" class="ghost-button ${isLogin ? "active" : ""}" data-action="set-auth-mode" data-auth-mode="login">登录</button>
+        </div>
+        <form id="auth-form" class="username-form">
+          <label>
+            用户名
+            <input
+              id="username-input"
+              name="username"
+              value="${escapeAttribute(state.ui.usernameInput)}"
+              placeholder="例如：shenzhen-aze"
+              autocomplete="off"
+              required
+            >
           </label>
-          <label>城市<input name="city" value="${profile.city}" placeholder="深圳" required></label>
-          <label>公司<input name="company" value="${profile.company}" placeholder="例如：腾讯" required></label>
-          <label>职业<input name="role" value="${profile.role}" placeholder="例如：后端工程师" required></label>
-          <label>学校<input name="school" value="${profile.school}" placeholder="例如：南方科技大学" required></label>
-          <label>标签<input name="tags" value="${profile.tags}" placeholder="徒步 / 看展 / 羽毛球" required></label>
-          <label class="full">自我介绍<textarea name="bio" rows="4" placeholder="说一点你的生活方式、关系观和想认识的人" required>${profile.bio}</textarea></label>
-          <button type="submit" class="primary-button">保存并开始刷卡</button>
+          <label>
+            密码
+            <input
+              id="password-input"
+              name="password"
+              type="password"
+              value="${escapeAttribute(state.ui.passwordInput)}"
+              placeholder="至少 6 位"
+              minlength="6"
+              autocomplete="current-password"
+              required
+            >
+          </label>
+          <div class="status-row">
+            <span class="status-text">${safeText(
+              state.ui.usernameStatus,
+              isLogin ? "输入用户名和密码后登录" : "设置用户名和密码后注册"
+            )}</span>
+            ${state.ui.usernameError ? `<span class="error-text">${escapeHtml(state.ui.usernameError)}</span>` : ""}
+          </div>
+          <div class="form-actions">
+            ${
+              isLogin
+                ? ""
+                : '<button type="button" class="ghost-button" data-action="check-username">检查是否可用</button>'
+            }
+            <button type="submit" class="primary-button">${isLogin ? "登录" : "进入 Sanmao"}</button>
+          </div>
         </form>
+        <p class="panel-copy">演示账号统一测试密码：demo123456</p>
       </section>
     `;
   }
 
-  function renderQuota() {
-    const remaining = Math.max(0, DAILY_LIMIT - state.daily.viewed);
+  function renderNav() {
+    const tabs = [
+      { id: "discover", label: "发现" },
+      { id: "liked", label: "喜欢" },
+      { id: "messages", label: "消息" },
+      { id: "profile", label: "我的" }
+    ];
+
     return `
-      <div class="quota-card">
-        <div>
-          <div class="section-label">TODAY</div>
-          <strong>还可以看 ${remaining} 份异性资料</strong>
-        </div>
-        <span>${state.daily.viewed} / ${DAILY_LIMIT}</span>
-      </div>
+      <nav class="app-nav">
+        ${tabs
+          .map(
+            (tab) => `
+              <button
+                type="button"
+                class="nav-item ${state.ui.activeTab === tab.id ? "active" : ""}"
+                data-action="switch-tab"
+                data-tab="${tab.id}"
+              >
+                ${tab.label}
+              </button>
+            `
+          )
+          .join("")}
+      </nav>
     `;
   }
 
-  function renderCard(profile) {
+  function renderDiscover() {
+    const profile = getCurrentDiscoverProfile();
+    const remaining = getRemainingCount();
+    const ratio = `${Math.min(100, (state.local.viewedCount / DAILY_LIMIT) * 100)}%`;
+
     if (!profile) {
       return `
-        <section class="panel empty-state">
-          <div class="section-label">TODAY COMPLETE</div>
-          <h2>今天的 30 份资料已经看完了</h2>
-          <p>演示版会在明天自动重置，你也可以刷新页面看看已匹配聊天。</p>
+        <section class="panel app-card">
+          <div class="section-label">DISCOVER</div>
+          <h2>${remaining === 0 ? "today complete" : "当前可浏览资料已经看完了"}</h2>
+          <p class="panel-copy">
+            ${
+              remaining === 0
+                ? "你今天的 30 次浏览机会已经用完了。"
+                : `你今天理论上还可以看 ${remaining} 份资料，但当前数据库里没有更多可浏览对象了。`
+            }
+          </p>
         </section>
       `;
     }
 
     return `
-      <section class="panel card-panel">
-        <div class="card-photo" style="background-image:url('${profile.avatar}')"></div>
-        <div class="card-body">
-          <div class="card-main">
-            <div>
-              <h2>${profile.name}，${profile.age}</h2>
-              <p>${profile.company} · ${profile.role}</p>
-            </div>
-            <div class="mini-meta">${profile.city}</div>
-          </div>
-          <div class="meta-grid">
-            <span>${profile.school}</span>
-            <span>${profile.height}</span>
-          </div>
-          <div class="tag-row">
-            ${profile.tags.map((tag) => `<span>${tag}</span>`).join("")}
-          </div>
-          <p class="bio">${profile.bio}</p>
-          <div class="prompt-block">
-            <div class="section-label">TA 的一句话</div>
-            <p>${profile.prompt}</p>
-          </div>
-          <div class="actions">
-            <button type="button" class="ghost-button" data-action="pass">跳过</button>
-            <button type="button" class="primary-button" data-action="like">喜欢</button>
-          </div>
-        </div>
-      </section>
-    `;
-  }
-
-  function renderMatches() {
-    if (!state.matchedIds.length) {
-      return `
-        <section class="panel match-list">
-          <div class="section-label">MATCHES</div>
-          <h3>还没有匹配</h3>
-          <p>命中预设的双向喜欢后，这里会出现聊天入口。</p>
-        </section>
-      `;
-    }
-
-    const items = seedProfiles.filter((profile) => state.matchedIds.includes(profile.id));
-
-    return `
-      <section class="panel match-list">
-        <div class="section-label">MATCHES</div>
-        <h3>已经互相喜欢的人</h3>
-        <div class="match-items">
-          ${items
-            .map(
-              (item) => `
-                <button class="match-item" data-chat-id="${item.id}">
-                  <img src="${item.avatar}" alt="${item.name}">
-                  <div>
-                    <strong>${item.name}</strong>
-                    <span>${item.company} · ${item.role}</span>
-                  </div>
-                </button>
-              `
-            )
-            .join("")}
-        </div>
-      </section>
-    `;
-  }
-
-  function renderChat() {
-    if (!state.activeChatId) {
-      return "";
-    }
-
-    const profile = seedProfiles.find((item) => item.id === state.activeChatId);
-    const thread = getChatThread(state.activeChatId, chatThreads);
-
-    return `
-      <section class="chat-screen">
-        <div class="chat-header">
-          <button type="button" class="text-button" data-action="back-chat">返回</button>
+      <section class="quota-panel app-card">
+        <div class="quota-top">
           <div>
-            <strong>${profile.name}</strong>
-            <p>演示聊天</p>
+            <div class="section-label">TODAY'S WINDOW</div>
+            <h3>今天还可以看 ${remaining} 份资料</h3>
+          </div>
+          <strong>${state.local.viewedCount} / ${DAILY_LIMIT}</strong>
+        </div>
+        <div class="progress-track"><span style="width:${ratio}"></span></div>
+      </section>
+      <section class="panel swipe-card app-card">
+        <div class="swipe-card-top">
+          <div class="swipe-copy">
+            <div class="section-label">DISCOVER</div>
+            <h2>${safeText(profile.name)}，${safeText(profile.age, "--")}</h2>
+            <p>${safeText(profile.company, "公司未填")} · ${safeText(profile.role, "职业未填")} · ${safeText(profile.city, "城市未填")}</p>
           </div>
         </div>
-        <div class="chat-thread">
-          ${thread
+        <div class="swipe-visual">
+          <div class="swipe-photo" style="background-image:url('${safeImageAttr(profile.avatar_url)}')"></div>
+          <div class="swipe-floating-card">
+            <div class="mini-stat">学校</div>
+            <strong>${safeText(profile.school, "未填写")}</strong>
+            <div class="mini-stat">关键词</div>
+            <div class="tag-row compact">
+              ${safeTagList(profile.tags)}
+            </div>
+          </div>
+        </div>
+        <div class="detail-block">
+          <div class="section-label">自我介绍</div>
+          <p>${safeText(profile.bio, "这个人还没有写自我介绍。")}</p>
+        </div>
+        <div class="actions">
+          <button type="button" class="ghost-button" data-action="skip-user" data-user-id="${profile.user_id}">先划过</button>
+          <button type="button" class="primary-button" data-action="like-user" data-user-id="${profile.user_id}">喜欢</button>
+        </div>
+      </section>
+    `;
+  }
+
+  function renderLiked() {
+    const liked = state.appData?.liked || [];
+    const likedBy = state.appData?.liked_by || [];
+
+    return `
+      <section class="panel app-card">
+        <div class="section-label">I LIKED</div>
+        <h2>我喜欢的人</h2>
+        ${
+          liked.length
+            ? `<div class="mini-list">
+                ${liked
+                  .map(
+                    (profile) => `
+                      <div class="mini-profile static-card">
+                        <img src="${safeImageAttr(profile.avatar_url)}" alt="${escapeAttribute(profile.name)}">
+                        <div>
+                          <strong>${safeText(profile.name)}</strong>
+                          <span>${safeText(profile.company, "未填公司")} · ${safeText(profile.role, "未填职业")}</span>
+                        </div>
+                      </div>
+                    `
+                  )
+                  .join("")}
+              </div>`
+            : `<p class="panel-copy">你还没有主动喜欢过任何人。</p>`
+        }
+      </section>
+      <section class="panel app-card">
+        <div class="section-label">LIKED ME</div>
+        <h2>喜欢我的人</h2>
+        ${
+          likedBy.length
+            ? `<div class="mini-list">
+                ${likedBy
+                  .map(
+                    (profile) => `
+                      <div class="mini-profile static-card">
+                        <img src="${safeImageAttr(profile.avatar_url)}" alt="${escapeAttribute(profile.name)}">
+                        <div>
+                          <strong>${safeText(profile.name)}</strong>
+                          <span>${safeText(profile.company, "未填公司")} · ${safeText(profile.role, "未填职业")}</span>
+                        </div>
+                        <button class="primary-button small-button" data-action="like-user" data-user-id="${profile.user_id}">回赞</button>
+                      </div>
+                    `
+                  )
+                  .join("")}
+              </div>`
+            : `<p class="panel-copy">暂时还没有人喜欢你。等后端逻辑继续补完后，这里会更丰富。</p>`
+        }
+      </section>
+    `;
+  }
+
+  function renderMessages() {
+    const matches = state.appData?.matches || [];
+    const activeMatch = getActiveMatch();
+
+    return `
+      <section class="panel app-card">
+        <div class="section-label">MESSAGES</div>
+        <h2>消息</h2>
+        ${
+          matches.length
+            ? `<div class="mini-list">
+                ${matches
+                  .map(
+                    (match) => `
+                      <button class="mini-profile chat-row ${String(match.match_id) === String(activeMatch?.match_id) ? "selected" : ""}" data-action="open-match" data-match-id="${match.match_id}">
+                        <img src="${safeImageAttr(match.other.avatar_url)}" alt="${escapeAttribute(match.other.name)}">
+                        <div>
+                          <strong>${safeText(match.other.name)}</strong>
+                          <span>${safeText(match.other.company, "未填公司")} · ${safeText(match.other.role, "未填职业")}</span>
+                        </div>
+                      </button>
+                    `
+                  )
+                  .join("")}
+              </div>`
+            : `<p class="panel-copy">还没有形成匹配，会话列表会在互相喜欢后出现。</p>`
+        }
+      </section>
+      ${
+        activeMatch
+          ? renderChat(activeMatch)
+          : ""
+      }
+    `;
+  }
+
+  function renderChat(match) {
+    const profileCompleted = Boolean(state.appData?.profile?.profile_completed);
+    const safeMessages = Array.isArray(match?.messages) ? match.messages : [];
+
+    return `
+      <section class="panel chat-panel app-card">
+        <div class="chat-header compact-header">
+          <div>
+            <div class="section-label">CHAT</div>
+            <strong>${safeText(match.other?.name)}</strong>
+            <p>${profileCompleted ? "现在可以继续聊天。" : "发送消息前需要先补完整资料。"}</p>
+          </div>
+        </div>
+        <div class="chat-thread embedded-thread">
+          ${safeMessages
             .map(
               (message) => `
-                <div class="bubble ${message.from === state.profile.id ? "mine" : "theirs"}">
-                  ${message.text}
+                <div class="bubble ${message.sender_id === null ? "mine" : Number(message.sender_id) === Number(state.appData?.profile?.user_id) ? "mine" : "theirs"}">
+                  ${safeText(message.content)}
                 </div>
               `
             )
             .join("")}
         </div>
+        ${
+          profileCompleted
+            ? `
+              <form id="chat-form" class="chat-composer" data-match-id="${match.match_id}">
+                <input id="chat-input" name="message" value="${escapeAttribute(state.draftMessage)}" placeholder="发一句消息..." autocomplete="off">
+                <button type="submit" class="primary-button">发送</button>
+              </form>
+            `
+            : `
+              <div class="detail-block">
+                <p class="error-text">${safeText(state.ui.messageError, "先去“我的”里补完整资料，再回来发第一条消息。")}</p>
+                <button class="primary-button small-button" data-action="switch-tab" data-tab="profile">去补资料</button>
+              </div>
+            `
+        }
       </section>
     `;
   }
 
-  function renderMatchModal() {
-    const latestMatchId = state.latestMatchId;
-    if (!latestMatchId) {
+  function renderProfile() {
+    const profile = state.appData?.profile;
+    if (!profile) {
       return "";
     }
 
-    const match = seedProfiles.find((profile) => profile.id === latestMatchId);
+    if (state.ui.editingProfile) {
+      return `
+        <section class="panel onboarding app-card">
+          <div class="panel-head">
+            <div>
+              <div class="section-label">EDIT PROFILE</div>
+              <h2>完善你的资料</h2>
+              <p class="panel-copy">只有完整资料后，聊天功能才会真正解锁。</p>
+            </div>
+          </div>
+          <form id="profile-form" class="profile-form">
+            <label>性别
+              <select name="gender">
+                <option value="male" ${profile.gender === "male" ? "selected" : ""}>男生</option>
+                <option value="female" ${profile.gender === "female" ? "selected" : ""}>女生</option>
+              </select>
+            </label>
+            <label>昵称<input name="name" value="${escapeAttribute(profile.name || "")}" required></label>
+            <label>年龄<input name="age" value="${escapeAttribute(profile.age || "")}" required></label>
+            <label>城市<input name="city" value="${escapeAttribute(profile.city || "")}" required></label>
+            <label>公司<input name="company" value="${escapeAttribute(profile.company || "")}" required></label>
+            <label>职业<input name="role" value="${escapeAttribute(profile.role || "")}" required></label>
+            <label>学校<input name="school" value="${escapeAttribute(profile.school || "")}" required></label>
+            <label class="full">标签<input name="tags" value="${escapeAttribute(profile.tags || "")}" placeholder="徒步 / 看展 / 羽毛球" required></label>
+            <label class="full">自我介绍<textarea name="bio" rows="4" required>${escapeHtml(profile.bio || "")}</textarea></label>
+            ${state.ui.profileError ? `<p class="error-text">${escapeHtml(state.ui.profileError)}</p>` : ""}
+            <div class="form-actions">
+              <button type="button" class="ghost-button" data-action="cancel-profile">取消</button>
+              <button type="submit" class="primary-button">保存资料</button>
+            </div>
+          </form>
+        </section>
+      `;
+    }
 
     return `
-      <div class="modal-backdrop" data-action="close-modal">
-        <div class="match-modal" onclick="event.stopPropagation()">
-          <div class="section-label">IT'S A MATCH</div>
-          <h2>你和 ${match.name} 互相喜欢</h2>
-          <p>这是演示版，会进入预设聊天内容。</p>
-          <div class="modal-actions">
-            <button type="button" class="ghost-button" data-action="close-modal">继续刷卡</button>
-            <button type="button" class="primary-button" data-action="open-chat" data-chat-id="${match.id}">去聊天</button>
+      <section class="panel profile-view app-card">
+        <div class="profile-header-row">
+          <div>
+            <div class="section-label">MY PROFILE</div>
+            <h2>${safeText(profile.name || state.auth.username)}</h2>
+            <p class="panel-copy">${safeText(profile.company, "未填写公司")} · ${safeText(profile.role, "未填写职业")} · ${safeText(profile.city, "未填写城市")}</p>
+          </div>
+          <div class="form-actions">
+            <button type="button" class="ghost-button small-button" data-action="logout">退出</button>
+            <button type="button" class="primary-button small-button" data-action="edit-profile">编辑资料</button>
           </div>
         </div>
-      </div>
+        <div class="meta-grid">
+          <span>${profile.gender === "female" ? "女生" : "男生"}</span>
+          <span>${safeText(profile.school, "学校未填写")}</span>
+          <span>${profile.profile_completed ? "资料已完整" : "资料待完善"}</span>
+        </div>
+        <div class="detail-block">
+          <div class="section-label">自我介绍</div>
+          <p>${safeText(profile.bio, "还没有填写自我介绍。")}</p>
+        </div>
+      </section>
     `;
+  }
+
+  function renderContent() {
+    if (state.auth.checkingSession) {
+      return `<section class="panel app-card"><p>正在确认登录状态...</p></section>`;
+    }
+
+    if (!state.auth.authenticated) {
+      return renderAuth();
+    }
+
+    if (state.loading || !state.appData) {
+      return `<section class="panel app-card"><p>正在加载数据...</p></section>`;
+    }
+
+    if (state.ui.activeTab === "discover") {
+      return renderDiscover();
+    }
+
+    if (state.ui.activeTab === "liked") {
+      return renderLiked();
+    }
+
+    if (state.ui.activeTab === "messages") {
+      return renderMessages();
+    }
+
+    return renderProfile();
   }
 
   function renderApp() {
-    const currentCard = state.daily.viewed >= DAILY_LIMIT ? null : getCurrentCard();
-
     root.innerHTML = `
       <div class="app-shell">
         ${renderHero()}
-        ${
-          state.completedProfile
-            ? `
-              <section class="dashboard">
-                <div class="left-column">
-                  ${renderQuota()}
-                  ${renderCard(currentCard)}
-                </div>
-                <div class="right-column">
-                  ${renderMatches()}
-                </div>
-              </section>
-              ${renderChat()}
-            `
-            : renderProfileForm()
-        }
+        ${state.auth.authenticated ? renderNav() : ""}
+        ${renderContent()}
       </div>
-      ${renderMatchModal()}
     `;
-
     bindEvents();
+    syncChatScroll();
   }
 
-  function handleProfileSubmit(event) {
+  function syncChatScroll() {
+    const thread = root.querySelector(".embedded-thread");
+    if (thread) {
+      thread.scrollTop = thread.scrollHeight;
+    }
+  }
+
+  async function checkUsername() {
+    const username = state.ui.usernameInput.trim();
+    if (!username) {
+      setState({
+        ...state,
+        ui: {
+          ...state.ui,
+          usernameStatus: "",
+          usernameError: "请输入用户名"
+        }
+      });
+      return false;
+    }
+
+    try {
+      await apiFetch(`/api/check-username?username=${encodeURIComponent(username)}`);
+      setState({
+        ...state,
+        ui: {
+          ...state.ui,
+          usernameStatus: "用户名已填写，可继续注册",
+          usernameError: ""
+        }
+      });
+      return true;
+    } catch {
+      setState({
+        ...state,
+        ui: {
+          ...state.ui,
+          usernameError: "检查用户名失败"
+        }
+      });
+      return false;
+    }
+  }
+
+  async function handleAuthSubmit(event) {
     event.preventDefault();
-    const formData = new FormData(event.currentTarget);
-    state = {
-      ...state,
-      profile: {
-        ...state.profile,
-        name: String(formData.get("name")).trim(),
-        age: String(formData.get("age")).trim(),
-        gender: String(formData.get("gender")),
-        city: String(formData.get("city")).trim(),
-        company: String(formData.get("company")).trim(),
-        role: String(formData.get("role")).trim(),
-        school: String(formData.get("school")).trim(),
-        tags: String(formData.get("tags")).trim(),
-        bio: String(formData.get("bio")).trim()
-      },
-      completedProfile: true
-    };
-    persist();
-    renderApp();
+
+    if (state.ui.authMode === "login") {
+      return handleLogin();
+    }
+
+    return handleRegister();
   }
 
-  function moveNext(collectionKey, candidateId) {
-    state = {
-      ...state,
-      daily: incrementViews(state.daily),
-      [collectionKey]: [...state[collectionKey], candidateId]
-    };
-    persist();
-    renderApp();
+  async function handleRegister() {
+    const available = await checkUsername();
+    if (!available) {
+      return;
+    }
+
+    const password = state.ui.passwordInput;
+
+    try {
+      const result = await apiFetch("/api/register", {
+        method: "POST",
+        body: JSON.stringify({
+          username: state.ui.usernameInput.trim(),
+          password
+        })
+      });
+
+      state = {
+        ...state,
+        auth: {
+          ...state.auth,
+          username: result.username || state.ui.usernameInput.trim(),
+          authenticated: true,
+          checkingSession: false
+        },
+        ui: {
+          ...state.ui,
+          passwordInput: "",
+          usernameError: "",
+          usernameStatus: "",
+          authMode: "login"
+        }
+      };
+      persist();
+      await refreshAppData();
+    } catch (error) {
+      setState({
+        ...state,
+        auth: {
+          ...state.auth,
+          checkingSession: false
+        },
+        ui: {
+          ...state.ui,
+          passwordInput: "",
+          usernameError:
+            error.message === "username_taken"
+              ? "用户名已存在"
+              : error.message === "password_too_short"
+                ? "密码至少 6 位"
+                : "注册失败"
+        }
+      });
+    }
   }
 
-  function handleLike(candidateId) {
-    const result = registerLike({
-      viewerId: state.profile.id,
-      candidateId,
-      likesMap: mutualLikes,
-      likedIds: state.likedIds
+  async function handleLogin() {
+    const username = state.ui.usernameInput.trim();
+    const password = state.ui.passwordInput;
+    if (!username) {
+      setState({
+        ...state,
+        auth: {
+          ...state.auth,
+          checkingSession: false
+        },
+        ui: {
+          ...state.ui,
+          usernameStatus: "",
+          usernameError: "请输入用户名"
+        }
+      });
+      return;
+    }
+
+    if (!password) {
+      setState({
+        ...state,
+        auth: {
+          ...state.auth,
+          checkingSession: false
+        },
+        ui: {
+          ...state.ui,
+          usernameStatus: "",
+          usernameError: "请输入密码"
+        }
+      });
+      return;
+    }
+
+    try {
+      const result = await apiFetch("/api/login", {
+        method: "POST",
+        body: JSON.stringify({ username, password })
+      });
+
+      state = {
+        ...state,
+        auth: {
+          ...state.auth,
+          username: result.username || username,
+          authenticated: true,
+          checkingSession: false
+        },
+        ui: {
+          ...state.ui,
+          passwordInput: "",
+          usernameError: "",
+          usernameStatus: "已登录"
+        }
+      };
+      persist();
+      await refreshAppData();
+    } catch (error) {
+      setState({
+        ...state,
+        auth: {
+          ...state.auth,
+          checkingSession: false
+        },
+        ui: {
+          ...state.ui,
+          passwordInput: "",
+          usernameError:
+            error.message === "invalid_credentials"
+              ? "用户名或密码错误"
+              : error.message === "password_required"
+                ? "请输入密码"
+                : "登录失败"
+        }
+      });
+    }
+  }
+
+  async function handleLike(userId) {
+    await apiFetch("/api/like", {
+      method: "POST",
+      body: JSON.stringify({
+        target_user_id: Number(userId)
+      })
     });
 
     state = {
       ...state,
-      daily: incrementViews(state.daily),
-      likedIds: result.likedIds,
-      matchedIds: Array.from(new Set([...state.matchedIds, ...result.matches])),
-      latestMatchId: result.matched ? candidateId : null
+      local: {
+        ...state.local,
+        viewedCount: state.local.viewedCount + 1
+      }
     };
     persist();
-    renderApp();
+    await refreshAppData();
+  }
+
+  async function handleSendMessage(event) {
+    event.preventDefault();
+    const matchId = Number(event.currentTarget.dataset.matchId);
+    try {
+      await apiFetch("/api/message", {
+        method: "POST",
+        body: JSON.stringify({
+          match_id: matchId,
+          content: state.draftMessage
+        })
+      });
+
+      state = {
+        ...state,
+        draftMessage: "",
+        ui: {
+          ...state.ui,
+          messageError: ""
+        }
+      };
+      persist();
+      await refreshAppData();
+    } catch (error) {
+      setState({
+        ...state,
+        ui: {
+          ...state.ui,
+          messageError:
+            error.message === "profile_incomplete"
+              ? "先补完整资料，再发送第一条消息。"
+              : "发送失败"
+        }
+      });
+    }
+  }
+
+  async function handleProfileSave(event) {
+    event.preventDefault();
+    const formData = new FormData(event.currentTarget);
+    try {
+      await apiFetch("/api/profile", {
+        method: "PUT",
+        body: JSON.stringify({
+          gender: String(formData.get("gender")),
+          avatar_url: "",
+          name: String(formData.get("name")),
+          age: String(formData.get("age")),
+          city: String(formData.get("city")),
+          company: String(formData.get("company")),
+          role: String(formData.get("role")),
+          school: String(formData.get("school")),
+          tags: String(formData.get("tags")),
+          bio: String(formData.get("bio"))
+        })
+      });
+
+      state = {
+        ...state,
+        ui: {
+          ...state.ui,
+          editingProfile: false,
+          profileError: ""
+        }
+      };
+      persist();
+      await refreshAppData();
+    } catch {
+      setState({
+        ...state,
+        ui: {
+          ...state.ui,
+          profileError: "保存资料失败"
+        }
+      });
+    }
+  }
+
+  async function handleLogout() {
+    try {
+      await apiFetch("/api/logout", { method: "POST" });
+    } catch {
+      // ignore logout failure and still clear local state
+    }
+
+    setState({
+      ...createInitialState(),
+      ui: {
+        ...createInitialState().ui,
+        activeTab: state.ui.activeTab,
+        activeMatchId: null,
+        authMode: "login"
+      },
+      local: state.local,
+      draftMessage: "",
+      auth: {
+        ...createInitialState().auth,
+        userId: null,
+        checkingSession: false
+      }
+    });
   }
 
   function bindEvents() {
-    const profileForm = root.querySelector("#profile-form");
-    if (profileForm) {
-      profileForm.addEventListener("submit", handleProfileSubmit);
+    const authForm = root.querySelector("#auth-form");
+    if (authForm) {
+      authForm.addEventListener("submit", handleAuthSubmit);
     }
 
-    root.querySelectorAll("[data-action='pass']").forEach((button) => {
-      button.addEventListener("click", () => {
-        const currentCard = getCurrentCard();
-        if (currentCard) {
-          moveNext("passedIds", currentCard.id);
-        }
-      });
-    });
+    const profileForm = root.querySelector("#profile-form");
+    if (profileForm) {
+      profileForm.addEventListener("submit", handleProfileSave);
+    }
 
-    root.querySelectorAll("[data-action='like']").forEach((button) => {
-      button.addEventListener("click", () => {
-        const currentCard = getCurrentCard();
-        if (currentCard) {
-          handleLike(currentCard.id);
-        }
-      });
-    });
+    const chatForm = root.querySelector("#chat-form");
+    if (chatForm) {
+      chatForm.addEventListener("submit", handleSendMessage);
+    }
 
-    root.querySelectorAll("[data-chat-id]").forEach((button) => {
-      button.addEventListener("click", () => {
+    const usernameInput = root.querySelector("#username-input");
+    if (usernameInput) {
+      usernameInput.addEventListener("input", (event) => {
+        setState({
+          ...state,
+          ui: {
+            ...state.ui,
+            usernameInput: event.target.value,
+            usernameError: "",
+            usernameStatus: ""
+          }
+        });
+      });
+    }
+
+    const passwordInput = root.querySelector("#password-input");
+    if (passwordInput) {
+      passwordInput.addEventListener("input", (event) => {
+        setState({
+          ...state,
+          ui: {
+            ...state.ui,
+            passwordInput: event.target.value,
+            usernameError: ""
+          }
+        });
+      });
+    }
+
+    const chatInput = root.querySelector("#chat-input");
+    if (chatInput) {
+      chatInput.addEventListener("input", (event) => {
         state = {
           ...state,
-          activeChatId: button.dataset.chatId,
-          latestMatchId: null
+          draftMessage: event.target.value
         };
         persist();
-        renderApp();
+      });
+    }
+
+    root.querySelectorAll("[data-action='set-auth-mode']").forEach((button) => {
+      button.addEventListener("click", () => {
+        setState({
+          ...state,
+          ui: {
+            ...state.ui,
+            authMode: button.dataset.authMode,
+            passwordInput: "",
+            usernameError: "",
+            usernameStatus: ""
+          }
+        });
       });
     });
 
-    root.querySelectorAll("[data-action='close-modal']").forEach((button) => {
+    root.querySelectorAll("[data-action='check-username']").forEach((button) => {
+      button.addEventListener("click", checkUsername);
+    });
+
+    root.querySelectorAll("[data-action='switch-tab']").forEach((button) => {
       button.addEventListener("click", () => {
-        state = {
+        setState({
           ...state,
-          latestMatchId: null
-        };
-        persist();
-        renderApp();
+          ui: {
+            ...state.ui,
+            activeTab: button.dataset.tab,
+            editingProfile: false
+          }
+        });
       });
     });
 
-    root.querySelectorAll("[data-action='back-chat']").forEach((button) => {
+    root.querySelectorAll("[data-action='skip-user']").forEach((button) => {
       button.addEventListener("click", () => {
-        state = {
+        const userId = Number(button.dataset.userId);
+        setState({
           ...state,
-          activeChatId: null
-        };
-        persist();
-        renderApp();
+          local: {
+            viewedCount: state.local.viewedCount + 1,
+            skippedIds: [...state.local.skippedIds, userId]
+          }
+        });
       });
+    });
+
+    root.querySelectorAll("[data-action='like-user']").forEach((button) => {
+      button.addEventListener("click", () => {
+        handleLike(button.dataset.userId);
+      });
+    });
+
+    root.querySelectorAll("[data-action='open-match']").forEach((button) => {
+      button.addEventListener("click", () => {
+        setState({
+          ...state,
+          ui: {
+            ...state.ui,
+            activeMatchId: button.dataset.matchId
+          }
+        });
+      });
+    });
+
+    root.querySelectorAll("[data-action='edit-profile']").forEach((button) => {
+      button.addEventListener("click", () => {
+        setState({
+          ...state,
+          ui: {
+            ...state.ui,
+            editingProfile: true
+          }
+        });
+      });
+    });
+
+    root.querySelectorAll("[data-action='cancel-profile']").forEach((button) => {
+      button.addEventListener("click", () => {
+        setState({
+          ...state,
+          ui: {
+            ...state.ui,
+            editingProfile: false
+          }
+        });
+      });
+    });
+
+    root.querySelectorAll("[data-action='logout']").forEach((button) => {
+      button.addEventListener("click", handleLogout);
     });
   }
 
   renderApp();
+  refreshAppData();
 }

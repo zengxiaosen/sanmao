@@ -2,11 +2,15 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
+  appendChatMessage,
+  getCurrentCandidate,
+  getProfilesByIds,
   getDailyState,
   incrementViews,
   getCandidatesForViewer,
   registerLike,
-  getChatThread
+  getChatThread,
+  mergeProfileUpdate
 } from "../src/matchLogic.js";
 
 const viewer = {
@@ -45,6 +49,16 @@ test("getCandidatesForViewer only returns opposite gender candidates", () => {
   assert.deepEqual(result.map((item) => item.id), ["u-a", "u-b"]);
 });
 
+test("getCurrentCandidate returns the first available candidate", () => {
+  const result = getCurrentCandidate(candidates);
+  assert.equal(result.id, "u-a");
+});
+
+test("getCurrentCandidate returns null for an empty deck", () => {
+  const result = getCurrentCandidate([]);
+  assert.equal(result, null);
+});
+
 test("registerLike reports a match when candidate already likes viewer", () => {
   const result = registerLike({
     viewerId: "u-me",
@@ -79,4 +93,67 @@ test("getChatThread returns scripted messages for a matched profile", () => {
 test("getChatThread returns an empty array for unknown profile ids", () => {
   const result = getChatThread("u-missing", chats);
   assert.deepEqual(result, []);
+});
+
+test("getProfilesByIds preserves requested ordering", () => {
+  const profiles = [
+    { id: "u-a", name: "A" },
+    { id: "u-b", name: "B" },
+    { id: "u-c", name: "C" }
+  ];
+
+  const result = getProfilesByIds(["u-c", "u-a"], profiles);
+  assert.deepEqual(
+    result.map((item) => item.id),
+    ["u-c", "u-a"]
+  );
+});
+
+test("appendChatMessage appends a local outgoing message to the thread", () => {
+  const result = appendChatMessage({
+    chats,
+    matchId: "u-a",
+    senderId: "u-me",
+    text: "那就周末见。"
+  });
+
+  assert.equal(result["u-a"].length, 2);
+  assert.deepEqual(result["u-a"][1], {
+    from: "u-me",
+    text: "那就周末见。"
+  });
+});
+
+test("appendChatMessage trims blank content and keeps original thread", () => {
+  const result = appendChatMessage({
+    chats,
+    matchId: "u-a",
+    senderId: "u-me",
+    text: "   "
+  });
+
+  assert.deepEqual(result, chats);
+});
+
+test("mergeProfileUpdate overwrites editable profile fields with trimmed values", () => {
+  const result = mergeProfileUpdate(
+    {
+      id: "demo-user",
+      city: "深圳",
+      name: "旧昵称",
+      bio: "旧介绍"
+    },
+    {
+      name: "  新昵称  ",
+      bio: "  新介绍  ",
+      city: "  杭州 "
+    }
+  );
+
+  assert.deepEqual(result, {
+    id: "demo-user",
+    city: "杭州",
+    name: "新昵称",
+    bio: "新介绍"
+  });
 });
