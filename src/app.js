@@ -196,6 +196,17 @@ export function mountApp(root) {
     };
   }
 
+  function syncStateUiFromAuthDraft() {
+    state = {
+      ...state,
+      ui: {
+        ...state.ui,
+        usernameInput: authDraft.username,
+        passwordInput: authDraft.password
+      }
+    };
+  }
+
   async function refreshAppData() {
     if (!state.auth.checkingSession && !state.auth.authenticated) {
       return;
@@ -1197,6 +1208,6 @@ export function mountApp(root) {
   }
 
   renderApp();
-  syncAuthDraftFromState();
+  syncStateUiFromAuthDraft();
   refreshAppData();
 }
