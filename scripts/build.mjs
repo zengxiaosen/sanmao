@@ -13,3 +13,4 @@ await mkdir(path.join(outDir, "src"), { recursive: true });
 await cp(path.join(root, "index.html"), path.join(outDir, "index.html"));
 await cp(path.join(root, "styles.css"), path.join(outDir, "styles.css"));
 await cp(path.join(root, "src"), path.join(outDir, "src"), { recursive: true });
+await cp(path.join(root, "server"), path.join(outDir, "server"), { recursive: true });
