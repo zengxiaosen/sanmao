@@ -12,6 +12,7 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 from urllib.parse import parse_qs, urlparse
 
 from db import ensure_db, get_conn
+from seed_data import REPLY_TEMPLATES, SEED_USERS, STARTER_MESSAGES
 
 
 HOST = "0.0.0.0"
@@ -25,90 +26,16 @@ SESSION_COOKIE_NAME = "sanmao_session"
 SESSION_TTL_SECONDS = int(os.environ.get("SANMAO_SESSION_TTL_SECONDS", str(60 * 60 * 24 * 14)))
 PASSWORD_HASH_ITERATIONS = int(os.environ.get("SANMAO_PASSWORD_HASH_ITERATIONS", "600000"))
 DEMO_PASSWORD = os.environ.get("SANMAO_DEMO_PASSWORD", "demo123456")
-
-SEED_USERS = [
-    {
-        "id": 1001,
-        "username": "linqinghe",
-        "gender": "female",
-        "avatar_url": "https://images.unsplash.com/photo-1494790108377-be9c29b29330?auto=format&fit=crop&w=900&q=80",
-        "name": "林清禾",
-        "age": "23",
-        "city": "深圳",
-        "company": "腾讯",
-        "role": "产品经理",
-        "school": "中山大学",
-        "tags": "工作日十点半前睡 / 周末会去深圳湾骑车 / 能接受稳定关系慢慢来",
-        "bio": "工作节奏不算轻，所以会更珍惜下班后的时间。平时喜欢自己做点吃的、收拾房间、周末去海边吹风。希望认识一个说话温和、愿意认真投入关系的人，不用太会表达，但要稳定。",
-    },
-    {
-        "id": 1002,
-        "username": "zhouyining",
-        "gender": "female",
-        "avatar_url": "https://images.unsplash.com/photo-1488426862026-3ee34a7d66df?auto=format&fit=crop&w=900&q=80",
-        "name": "周以宁",
-        "age": "24",
-        "city": "深圳",
-        "company": "字节跳动",
-        "role": "算法工程师",
-        "school": "华南理工大学",
-        "tags": "周三固定打羽毛球 / 通勤路上听播客 / 不太喜欢反复试探",
-        "bio": "工作里比较理性，生活里反而希望关系简单一点。喜欢有边界感、情绪稳定、愿意好好说话的人。比起热闹，我更在意相处时是不是轻松，能不能自然地聊到很晚。",
-    },
-    {
-        "id": 1003,
-        "username": "chenxingye",
-        "gender": "female",
-        "avatar_url": "https://images.unsplash.com/photo-1517841905240-472988babdf9?auto=format&fit=crop&w=900&q=80",
-        "name": "陈星野",
-        "age": "25",
-        "city": "深圳",
-        "company": "美团",
-        "role": "商业分析",
-        "school": "暨南大学",
-        "tags": "周末背相机乱走 / 路过花店会停一下 / 不玩突然消失",
-        "bio": "朋友都说我看起来有点安静，但熟了以后其实挺爱说话。比起被人猛烈追求，我更喜欢那种相处里慢慢积累出来的喜欢。希望你有基本的分寸感，也有一点生活趣味。",
-    },
-    {
-        "id": 1004,
-        "username": "xuwenxi",
-        "gender": "female",
-        "avatar_url": "https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=900&q=80",
-        "name": "许闻溪",
-        "age": "24",
-        "city": "深圳",
-        "company": "小红书",
-        "role": "运营",
-        "school": "深圳大学",
-        "tags": "周末看展或探店 / 很少熬夜 / 喜欢有回应的人",
-        "bio": "有点慢热，所以不太适合特别快节奏的关系。比较喜欢那种彼此都忙，但还是愿意留时间给对方的状态。对我来说，靠谱不只是准时和守约，也包括情绪上不让人猜来猜去。",
-    },
-    {
-        "id": 1005,
-        "username": "shenzhao",
-        "gender": "female",
-        "avatar_url": "https://images.unsplash.com/photo-1524504388940-b1c1722653e1?auto=format&fit=crop&w=900&q=80",
-        "name": "沈昭",
-        "age": "23",
-        "city": "深圳",
-        "company": "华为",
-        "role": "前端工程师",
-        "school": "哈尔滨工业大学（深圳）",
-        "tags": "下班后爱走路回家 / 拿铁少糖 / 聊天不喜欢端着",
-        "bio": "不太喜欢把关系搞得很复杂。平时工作写代码已经够费脑子了，感情里就更希望舒服一点。想认识一个沟通正常、脾气不差、对未来有自己打算的人，最好也愿意一起把日子过具体。",
-    },
-]
-
-STARTER_MESSAGES = {
-    1001: [
-        "看到你也在深圳，平时会去海边散步吗？",
-        "我一般周末傍晚会去深圳湾走一圈。"
-    ],
-    1003: [
-        "你资料里的那句自我介绍挺真诚的。",
-        "感觉可以先从一杯咖啡开始认识。"
-    ],
+MESSAGE_CATEGORY_KEYWORDS = {
+    "greeting": ["你好", "嗨", "哈喽", "hello", "hi", "hey"],
+    "work_school": ["工作", "上班", "学校", "专业", "公司", "加班", "职业"],
+    "interest": ["喜欢", "平时", "周末", "爱好", "兴趣", "下班", "休息"],
+    "compliment": ["感觉你", "可爱", "真诚", "加分", "温柔", "有趣", "好看"],
+    "invite": ["见面", "喝咖啡", "吃饭", "出来", "约", "散步"],
 }
+SEED_USERS_BY_ID = {user["id"]: user for user in SEED_USERS}
+
+
 
 
 def json_response(handler, status, payload, headers=None):
@@ -307,6 +234,72 @@ def create_match_if_needed(conn, from_user_id, to_user_id):
         (user_a, user_b),
     ).fetchone()
     return match["id"]
+
+
+def get_seed_profile_for_match(conn, match_id, user_id):
+    row = conn.execute(
+        """
+        SELECT user_a, user_b
+        FROM matches
+        WHERE id = ? AND (user_a = ? OR user_b = ?)
+        """,
+        (match_id, user_id, user_id),
+    ).fetchone()
+    if not row:
+        return None
+
+    other_user_id = row["user_b"] if row["user_a"] == user_id else row["user_a"]
+    return SEED_USERS_BY_ID.get(other_user_id)
+
+
+def classify_message(content):
+    lowered = content.lower()
+    for category, keywords in MESSAGE_CATEGORY_KEYWORDS.items():
+        if any(keyword in lowered for keyword in keywords):
+            return category
+    return "generic"
+
+
+def select_seed_reply(seed_user, category, last_seed_reply):
+    persona_type = seed_user.get("persona_type")
+    persona_templates = REPLY_TEMPLATES.get(persona_type, {})
+    options = persona_templates.get(category) or persona_templates.get("generic") or []
+    if not options:
+        return None
+
+    for option in options:
+        if option != last_seed_reply:
+            return option
+    return options[0]
+
+
+def build_seed_reply(conn, match_id, user_id, content):
+    seed_user = get_seed_profile_for_match(conn, match_id, user_id)
+    if not seed_user:
+        return None
+
+    last_seed_message = conn.execute(
+        """
+        SELECT content
+        FROM messages
+        WHERE match_id = ? AND sender_id = ?
+        ORDER BY created_at DESC, id DESC
+        LIMIT 1
+        """,
+        (match_id, seed_user["id"]),
+    ).fetchone()
+    reply_content = select_seed_reply(
+        seed_user,
+        classify_message(content),
+        last_seed_message["content"] if last_seed_message else None,
+    )
+    if not reply_content:
+        return None
+
+    return {
+        "sender_id": seed_user["id"],
+        "content": reply_content,
+    }
 
 
 def bootstrap_likes_for_new_user(conn, user_id):
@@ -581,7 +574,11 @@ class Handler(BaseHTTPRequestHandler):
             if not session_user:
                 return None
             user_id = session_user["id"]
-            target_user_id = int(payload["target_user_id"])
+            try:
+                target_user_id = int(payload.get("target_user_id"))
+            except (TypeError, ValueError):
+                conn.close()
+                return json_response(self, 400, {"error": "target_user_id_required"})
             conn.execute(
                 "INSERT OR IGNORE INTO likes (from_user_id, to_user_id) VALUES (?, ?)",
                 (user_id, target_user_id),
@@ -631,6 +628,12 @@ class Handler(BaseHTTPRequestHandler):
                 "INSERT INTO messages (match_id, sender_id, content) VALUES (?, ?, ?)",
                 (match_id, user_id, content),
             )
+            seed_reply = build_seed_reply(conn, match_id, user_id, content)
+            if seed_reply:
+                conn.execute(
+                    "INSERT INTO messages (match_id, sender_id, content) VALUES (?, ?, ?)",
+                    (match_id, seed_reply["sender_id"], seed_reply["content"]),
+                )
             conn.commit()
             conn.close()
             return json_response(self, 201, {"ok": True})
