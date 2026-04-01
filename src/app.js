@@ -59,6 +59,83 @@ export function createInitialState() {
   };
 }
 
+export function createAuthDraft() {
+  return {
+    username: "",
+    password: ""
+  };
+}
+
+export function setAuthDraftField(draft, key, value) {
+  if (draft[key] === value) {
+    return draft;
+  }
+
+  return {
+    ...draft,
+    [key]: value
+  };
+}
+
+export function resetAuthDraftPassword(draft) {
+  return setAuthDraftField(draft, "password", "");
+}
+
+export function submitAuthDraft(state, authDraft) {
+  const username = authDraft.username.trim();
+  return {
+    state: {
+      ...state,
+      auth: {
+        ...state.auth,
+        username
+      }
+    },
+    authDraft: {
+      username,
+      password: ""
+    },
+    credentials: {
+      username,
+      password: authDraft.password
+    }
+  };
+}
+
+export function getLaunchCopy() {
+  return {
+    heroEyebrow: "Sanmao",
+    heroTitle: "认真认识一个人，不用把开始变得太重。",
+    heroBody: "先留下名字，合适的时候再慢慢补完整资料，轻一点开始，真一点聊天。",
+    heroNoteLabel: "轻一点开始",
+    heroNoteTitle: "先进入看看，再决定怎么介绍自己。",
+    heroNoteBody: "发现、喜欢、消息和我的四个页签，会陪你把认识一个人的过程慢慢走完。",
+    authStepLabel: "开始",
+    authRegisterTitle: "创建你的 Sanmao 账号",
+    authLoginTitle: "欢迎回来",
+    authRegisterBody: "先进入看看，再决定想怎么介绍自己。",
+    authLoginBody: "继续上次的浏览、匹配和聊天。",
+    authStatusRegister: "设置用户名和密码后注册",
+    authStatusLogin: "输入用户名和密码后登录",
+    authAvailabilityAction: "看看这个名字能不能用",
+    authRegisterAction: "进入 Sanmao",
+    authLoginAction: "登录",
+    authPill: "登录后会保留你的浏览和聊天进度",
+    discoverLabel: "今日推荐",
+    discoverWindowLabel: "今日浏览",
+    discoverEmptyTitle: "今天的新推荐先看到这里",
+    discoverEmptyBody: "稍后再来看看，也可以先去消息里继续认识已经匹配的人。",
+    discoverExhaustedBody: "今天的浏览次数已经用完了，晚一点再回来看看新的相遇。",
+    likedLabel: "我喜欢的人",
+    likedByLabel: "喜欢我的人",
+    likedByEmpty: "暂时还没有新的喜欢，先去发现里看看今天的推荐。",
+    messagesLabel: "消息",
+    chatLabel: "对话",
+    editProfileLabel: "编辑资料",
+    myProfileLabel: "我的资料"
+  };
+}
+
 function safeText(value, fallback = "") {
   return escapeHtml(value || fallback);
 }
@@ -100,6 +177,7 @@ async function apiFetch(path, options = {}) {
 
 export function mountApp(root) {
   let state = loadState(createInitialState());
+  let authDraft = createAuthDraft();
 
   function persist() {
     saveState(state);
@@ -109,6 +187,13 @@ export function mountApp(root) {
     state = nextState;
     persist();
     renderApp();
+  }
+
+  function syncAuthDraftFromState() {
+    authDraft = {
+      username: state.ui.usernameInput,
+      password: state.ui.passwordInput
+    };
   }
 
   async function refreshAppData() {
@@ -142,11 +227,14 @@ export function mountApp(root) {
         },
         ui: {
           ...state.ui,
+          usernameInput: appData.profile?.username || state.ui.usernameInput,
+          passwordInput: "",
           activeMatchId:
             state.ui.activeMatchId ||
             (appData.matches[0] ? String(appData.matches[0].match_id) : null)
         }
       });
+      syncAuthDraftFromState();
     } catch (error) {
       if (error.message === "unauthorized") {
         setState({
@@ -154,7 +242,8 @@ export function mountApp(root) {
           ui: {
             ...createInitialState().ui,
             activeTab: state.ui.activeTab,
-            activeMatchId: state.ui.activeMatchId
+            activeMatchId: state.ui.activeMatchId,
+            usernameInput: state.ui.usernameInput
           },
           local: state.local,
           draftMessage: state.draftMessage,
@@ -164,6 +253,7 @@ export function mountApp(root) {
             checkingSession: false
           }
         });
+        syncAuthDraftFromState();
         return;
       }
 
@@ -212,18 +302,19 @@ export function mountApp(root) {
   }
 
   function renderHero() {
+    const copy = getLaunchCopy();
     return `
       <section class="hero">
-        <div class="eyebrow">Sanmao / SQLite MVP</div>
+        <div class="eyebrow">${copy.heroEyebrow}</div>
         <div class="hero-grid">
           <div>
-            <h1>先留一个名字，剩下的慢慢来。</h1>
-            <p>现在这版已经开始接真实数据库。先注册或登录用户名就能进入，只有真正要聊天时，才要求补全完整资料。</p>
+            <h1>${copy.heroTitle}</h1>
+            <p>${copy.heroBody}</p>
           </div>
           <div class="hero-note">
-            <div class="section-label">CURRENT FLOW</div>
-            <strong>用户名先行，资料后补。</strong>
-            <p>发现、喜欢、消息、我的四个页签现在会按各自主题独立展示，不再互相夹杂。</p>
+            <div class="section-label">${copy.heroNoteLabel}</div>
+            <strong>${copy.heroNoteTitle}</strong>
+            <p>${copy.heroNoteBody}</p>
           </div>
         </div>
       </section>
@@ -232,20 +323,17 @@ export function mountApp(root) {
 
   function renderAuth() {
     const isLogin = state.ui.authMode === "login";
+    const copy = getLaunchCopy();
 
     return `
       <section class="panel onboarding app-card">
         <div class="panel-head">
           <div>
-            <div class="section-label">STEP 1</div>
-            <h2>${isLogin ? "直接登录" : "先取一个用户名"}</h2>
-            <p class="panel-copy">${
-              isLogin
-                ? "如果这个用户名已经注册过，直接登录继续使用。"
-                : "先用用户名进入，后面真要聊天再补完整资料。"
-            }</p>
+            <div class="section-label">${copy.authStepLabel}</div>
+            <h2>${isLogin ? copy.authLoginTitle : copy.authRegisterTitle}</h2>
+            <p class="panel-copy">${isLogin ? copy.authLoginBody : copy.authRegisterBody}</p>
           </div>
-          <div class="pill">后端 session 会记住你的登录状态</div>
+          <div class="pill">${copy.authPill}</div>
         </div>
         <div class="auth-toggle-row">
           <button type="button" class="ghost-button ${isLogin ? "" : "active"}" data-action="set-auth-mode" data-auth-mode="register">注册</button>
@@ -257,7 +345,7 @@ export function mountApp(root) {
             <input
               id="username-input"
               name="username"
-              value="${escapeAttribute(state.ui.usernameInput)}"
+              value="${escapeAttribute(authDraft.username)}"
               placeholder="例如：shenzhen-aze"
               autocomplete="off"
               required
@@ -269,7 +357,7 @@ export function mountApp(root) {
               id="password-input"
               name="password"
               type="password"
-              value="${escapeAttribute(state.ui.passwordInput)}"
+              value="${escapeAttribute(authDraft.password)}"
               placeholder="至少 6 位"
               minlength="6"
               autocomplete="current-password"
@@ -279,7 +367,7 @@ export function mountApp(root) {
           <div class="status-row">
             <span class="status-text">${safeText(
               state.ui.usernameStatus,
-              isLogin ? "输入用户名和密码后登录" : "设置用户名和密码后注册"
+              isLogin ? copy.authStatusLogin : copy.authStatusRegister
             )}</span>
             ${state.ui.usernameError ? `<span class="error-text">${escapeHtml(state.ui.usernameError)}</span>` : ""}
           </div>
@@ -287,12 +375,11 @@ export function mountApp(root) {
             ${
               isLogin
                 ? ""
-                : '<button type="button" class="ghost-button" data-action="check-username">检查是否可用</button>'
+                : `<button type="button" class="ghost-button" data-action="check-username">${copy.authAvailabilityAction}</button>`
             }
-            <button type="submit" class="primary-button">${isLogin ? "登录" : "进入 Sanmao"}</button>
+            <button type="submit" class="primary-button">${isLogin ? copy.authLoginAction : copy.authRegisterAction}</button>
           </div>
         </form>
-        <p class="panel-copy">演示账号统一测试密码：demo123456</p>
       </section>
     `;
   }
@@ -326,6 +413,7 @@ export function mountApp(root) {
   }
 
   function renderDiscover() {
+    const copy = getLaunchCopy();
     const profile = getCurrentDiscoverProfile();
     const remaining = getRemainingCount();
     const ratio = `${Math.min(100, (state.local.viewedCount / DAILY_LIMIT) * 100)}%`;
@@ -333,14 +421,10 @@ export function mountApp(root) {
     if (!profile) {
       return `
         <section class="panel app-card">
-          <div class="section-label">DISCOVER</div>
-          <h2>${remaining === 0 ? "today complete" : "当前可浏览资料已经看完了"}</h2>
+          <div class="section-label">${copy.discoverLabel}</div>
+          <h2>${copy.discoverEmptyTitle}</h2>
           <p class="panel-copy">
-            ${
-              remaining === 0
-                ? "你今天的 30 次浏览机会已经用完了。"
-                : `你今天理论上还可以看 ${remaining} 份资料，但当前数据库里没有更多可浏览对象了。`
-            }
+            ${remaining === 0 ? copy.discoverExhaustedBody : copy.discoverEmptyBody}
           </p>
         </section>
       `;
@@ -350,7 +434,7 @@ export function mountApp(root) {
       <section class="quota-panel app-card">
         <div class="quota-top">
           <div>
-            <div class="section-label">TODAY'S WINDOW</div>
+            <div class="section-label">${copy.discoverWindowLabel}</div>
             <h3>今天还可以看 ${remaining} 份资料</h3>
           </div>
           <strong>${state.local.viewedCount} / ${DAILY_LIMIT}</strong>
@@ -360,7 +444,7 @@ export function mountApp(root) {
       <section class="panel swipe-card app-card">
         <div class="swipe-card-top">
           <div class="swipe-copy">
-            <div class="section-label">DISCOVER</div>
+            <div class="section-label">${copy.discoverLabel}</div>
             <h2>${safeText(profile.name)}，${safeText(profile.age, "--")}</h2>
             <p>${safeText(profile.company, "公司未填")} · ${safeText(profile.role, "职业未填")} · ${safeText(profile.city, "城市未填")}</p>
           </div>
@@ -389,12 +473,13 @@ export function mountApp(root) {
   }
 
   function renderLiked() {
+    const copy = getLaunchCopy();
     const liked = state.appData?.liked || [];
     const likedBy = state.appData?.liked_by || [];
 
     return `
       <section class="panel app-card">
-        <div class="section-label">I LIKED</div>
+        <div class="section-label">${copy.likedLabel}</div>
         <h2>我喜欢的人</h2>
         ${
           liked.length
@@ -417,7 +502,7 @@ export function mountApp(root) {
         }
       </section>
       <section class="panel app-card">
-        <div class="section-label">LIKED ME</div>
+        <div class="section-label">${copy.likedByLabel}</div>
         <h2>喜欢我的人</h2>
         ${
           likedBy.length
@@ -437,19 +522,20 @@ export function mountApp(root) {
                   )
                   .join("")}
               </div>`
-            : `<p class="panel-copy">暂时还没有人喜欢你。等后端逻辑继续补完后，这里会更丰富。</p>`
+            : `<p class="panel-copy">${copy.likedByEmpty}</p>`
         }
       </section>
     `;
   }
 
   function renderMessages() {
+    const copy = getLaunchCopy();
     const matches = state.appData?.matches || [];
     const activeMatch = getActiveMatch();
 
     return `
       <section class="panel app-card">
-        <div class="section-label">MESSAGES</div>
+        <div class="section-label">${copy.messagesLabel}</div>
         <h2>消息</h2>
         ${
           matches.length
@@ -480,6 +566,7 @@ export function mountApp(root) {
   }
 
   function renderChat(match) {
+    const copy = getLaunchCopy();
     const profileCompleted = Boolean(state.appData?.profile?.profile_completed);
     const safeMessages = Array.isArray(match?.messages) ? match.messages : [];
 
@@ -487,7 +574,7 @@ export function mountApp(root) {
       <section class="panel chat-panel app-card">
         <div class="chat-header compact-header">
           <div>
-            <div class="section-label">CHAT</div>
+            <div class="section-label">${copy.chatLabel}</div>
             <strong>${safeText(match.other?.name)}</strong>
             <p>${profileCompleted ? "现在可以继续聊天。" : "发送消息前需要先补完整资料。"}</p>
           </div>
@@ -523,6 +610,7 @@ export function mountApp(root) {
   }
 
   function renderProfile() {
+    const copy = getLaunchCopy();
     const profile = state.appData?.profile;
     if (!profile) {
       return "";
@@ -533,7 +621,7 @@ export function mountApp(root) {
         <section class="panel onboarding app-card">
           <div class="panel-head">
             <div>
-              <div class="section-label">EDIT PROFILE</div>
+              <div class="section-label">${copy.editProfileLabel}</div>
               <h2>完善你的资料</h2>
               <p class="panel-copy">只有完整资料后，聊天功能才会真正解锁。</p>
             </div>
@@ -567,7 +655,7 @@ export function mountApp(root) {
       <section class="panel profile-view app-card">
         <div class="profile-header-row">
           <div>
-            <div class="section-label">MY PROFILE</div>
+            <div class="section-label">${copy.myProfileLabel}</div>
             <h2>${safeText(profile.name || state.auth.username)}</h2>
             <p class="panel-copy">${safeText(profile.company, "未填写公司")} · ${safeText(profile.role, "未填写职业")} · ${safeText(profile.city, "未填写城市")}</p>
           </div>
@@ -637,7 +725,7 @@ export function mountApp(root) {
   }
 
   async function checkUsername() {
-    const username = state.ui.usernameInput.trim();
+    const username = authDraft.username.trim();
     if (!username) {
       setState({
         ...state,
@@ -689,13 +777,16 @@ export function mountApp(root) {
       return;
     }
 
-    const password = state.ui.passwordInput;
+    const { state: nextState, authDraft: nextAuthDraft, credentials } = submitAuthDraft(state, authDraft);
+    state = nextState;
+    authDraft = nextAuthDraft;
+    const password = credentials.password;
 
     try {
       const result = await apiFetch("/api/register", {
         method: "POST",
         body: JSON.stringify({
-          username: state.ui.usernameInput.trim(),
+          username: credentials.username,
           password
         })
       });
@@ -704,12 +795,13 @@ export function mountApp(root) {
         ...state,
         auth: {
           ...state.auth,
-          username: result.username || state.ui.usernameInput.trim(),
+          username: result.username || credentials.username,
           authenticated: true,
           checkingSession: false
         },
         ui: {
           ...state.ui,
+          usernameInput: credentials.username,
           passwordInput: "",
           usernameError: "",
           usernameStatus: "",
@@ -727,6 +819,7 @@ export function mountApp(root) {
         },
         ui: {
           ...state.ui,
+          usernameInput: credentials.username,
           passwordInput: "",
           usernameError:
             error.message === "username_taken"
@@ -736,12 +829,16 @@ export function mountApp(root) {
                 : "注册失败"
         }
       });
+      syncAuthDraftFromState();
     }
   }
 
   async function handleLogin() {
-    const username = state.ui.usernameInput.trim();
-    const password = state.ui.passwordInput;
+    const { state: nextState, authDraft: nextAuthDraft, credentials } = submitAuthDraft(state, authDraft);
+    state = nextState;
+    authDraft = nextAuthDraft;
+    const username = credentials.username;
+    const password = credentials.password;
     if (!username) {
       setState({
         ...state,
@@ -751,10 +848,13 @@ export function mountApp(root) {
         },
         ui: {
           ...state.ui,
+          usernameInput: username,
+          passwordInput: "",
           usernameStatus: "",
           usernameError: "请输入用户名"
         }
       });
+      syncAuthDraftFromState();
       return;
     }
 
@@ -767,10 +867,13 @@ export function mountApp(root) {
         },
         ui: {
           ...state.ui,
+          usernameInput: username,
+          passwordInput: "",
           usernameStatus: "",
           usernameError: "请输入密码"
         }
       });
+      syncAuthDraftFromState();
       return;
     }
 
@@ -790,6 +893,7 @@ export function mountApp(root) {
         },
         ui: {
           ...state.ui,
+          usernameInput: username,
           passwordInput: "",
           usernameError: "",
           usernameStatus: "已登录"
@@ -806,6 +910,7 @@ export function mountApp(root) {
         },
         ui: {
           ...state.ui,
+          usernameInput: username,
           passwordInput: "",
           usernameError:
             error.message === "invalid_credentials"
@@ -815,6 +920,7 @@ export function mountApp(root) {
                 : "登录失败"
         }
       });
+      syncAuthDraftFromState();
     }
   }
 
@@ -927,7 +1033,8 @@ export function mountApp(root) {
         ...createInitialState().ui,
         activeTab: state.ui.activeTab,
         activeMatchId: null,
-        authMode: "login"
+        authMode: "login",
+        usernameInput: state.ui.usernameInput
       },
       local: state.local,
       draftMessage: "",
@@ -937,6 +1044,7 @@ export function mountApp(root) {
         checkingSession: false
       }
     });
+    syncAuthDraftFromState();
   }
 
   function bindEvents() {
@@ -958,29 +1066,29 @@ export function mountApp(root) {
     const usernameInput = root.querySelector("#username-input");
     if (usernameInput) {
       usernameInput.addEventListener("input", (event) => {
-        setState({
+        authDraft = setAuthDraftField(authDraft, "username", event.target.value);
+        state = {
           ...state,
           ui: {
             ...state.ui,
-            usernameInput: event.target.value,
             usernameError: "",
             usernameStatus: ""
           }
-        });
+        };
       });
     }
 
     const passwordInput = root.querySelector("#password-input");
     if (passwordInput) {
       passwordInput.addEventListener("input", (event) => {
-        setState({
+        authDraft = setAuthDraftField(authDraft, "password", event.target.value);
+        state = {
           ...state,
           ui: {
             ...state.ui,
-            passwordInput: event.target.value,
             usernameError: ""
           }
-        });
+        };
       });
     }
 
@@ -997,6 +1105,7 @@ export function mountApp(root) {
 
     root.querySelectorAll("[data-action='set-auth-mode']").forEach((button) => {
       button.addEventListener("click", () => {
+        authDraft = resetAuthDraftPassword(authDraft);
         setState({
           ...state,
           ui: {
@@ -1088,5 +1197,6 @@ export function mountApp(root) {
   }
 
   renderApp();
+  syncAuthDraftFromState();
   refreshAppData();
 }
