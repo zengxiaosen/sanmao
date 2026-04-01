@@ -123,6 +123,28 @@ export function resolveIcebreakerSuggestions(candidateProfile, responsePayload) 
   };
 }
 
+export function buildAutoReply(candidateProfile, openingMessage) {
+  const message = String(openingMessage || "").trim();
+  const hooks = Array.isArray(candidateProfile?.conversationHooks)
+    ? candidateProfile.conversationHooks.filter(Boolean)
+    : [];
+  const firstHook = hooks[0] || candidateProfile?.idealFirstMove || candidateProfile?.prompt || "这个话题";
+
+  if (message.includes("最近") || message.includes("哪次") || message.includes("什么时候")) {
+    return `最近一次和${firstHook}有关的安排还挺舒服的，你一般会怎么选？`;
+  }
+
+  if (message.includes("周末") || message.includes("下班") || message.includes("平时")) {
+    return `我平时也会留时间给${firstHook}，你更偏向临时起意还是提前安排？`;
+  }
+
+  if (message.includes("想") || message.includes("会不会") || message.includes("喜欢")) {
+    return `会，我对${firstHook}这种轻松一点的话题还挺有分享欲的。`;
+  }
+
+  return `你这个开场还挺自然的，我对${firstHook}也有点兴趣，要不要顺着聊下去？`;
+}
+
 export function buildCompatibilitySummary(viewerProfile, candidateProfile) {
   if (!candidateProfile) {
     return "先回到消息列表看看新的匹配吧。";
@@ -498,6 +520,16 @@ export function mountApp(root) {
             )
             .join("")}
         </div>
+        <form class="chat-composer" data-chat-form>
+          <input
+            type="text"
+            name="message"
+            value="${escapeHtml(state.draftMessage)}"
+            placeholder="输入你想发的话"
+            autocomplete="off"
+          >
+          <button type="submit" class="primary-button">发送</button>
+        </form>
       </section>
     `;
   }
@@ -560,16 +592,8 @@ export function mountApp(root) {
 
     root.querySelectorAll("[data-send-icebreaker]").forEach((button) => {
       button.addEventListener("click", () => {
-        const profile = seedProfiles.find((item) => item.id === state.activeChatId);
         const message = button.dataset.sendIcebreaker;
         const nextThread = [...getChatThread(state.activeChatId, chatThreads), { from: state.profile.id, text: message }];
-
-        if (profile) {
-          nextThread.push({
-            from: profile.id,
-            text: `这句开场我愿意接。${profile.conversationHooks?.[0] || profile.prompt}`
-          });
-        }
 
         chatThreads[state.activeChatId] = nextThread;
         state = {
@@ -578,6 +602,11 @@ export function mountApp(root) {
         };
         persist();
         renderApp();
+
+        const chatThread = root.querySelector(".chat-thread");
+        if (chatThread) {
+          chatThread.scrollTop = chatThread.scrollHeight;
+        }
       });
     });
 
@@ -592,6 +621,34 @@ export function mountApp(root) {
       });
     });
 
+    root.querySelectorAll("[data-chat-form]").forEach((form) => {
+      form.addEventListener("submit", (event) => {
+        event.preventDefault();
+        const formData = new FormData(event.currentTarget);
+        const message = String(formData.get("message") || "").trim();
+
+        if (!message || !state.activeChatId) {
+          return;
+        }
+
+        chatThreads[state.activeChatId] = [
+          ...getChatThread(state.activeChatId, chatThreads),
+          { from: state.profile.id, text: message }
+        ];
+        state = {
+          ...state,
+          draftMessage: ""
+        };
+        persist();
+        renderApp();
+
+        const chatThread = root.querySelector(".chat-thread");
+        if (chatThread) {
+          chatThread.scrollTop = chatThread.scrollHeight;
+        }
+      });
+    });
+
     root.querySelectorAll("[data-chat-id]").forEach((button) => {
       button.addEventListener("click", () => {
         openChat(button.dataset.chatId);
@@ -601,6 +658,16 @@ export function mountApp(root) {
     root.querySelectorAll("[data-action='refresh-icebreakers']").forEach((button) => {
       button.addEventListener("click", () => {
         void loadAiIcebreakers(state.activeChatId, true);
+      });
+    });
+
+    root.querySelectorAll("[data-chat-form] input[name='message']").forEach((input) => {
+      input.addEventListener("input", (event) => {
+        state = {
+          ...state,
+          draftMessage: event.currentTarget.value
+        };
+        persist();
       });
     });
 
@@ -707,6 +774,7 @@ export function mountApp(root) {
   }
 
   function renderApp() {
+    const previousScrollTop = root.querySelector(".chat-thread")?.scrollTop ?? null;
     const currentCard = state.daily.viewed >= DAILY_LIMIT ? null : getCurrentCard();
 
     root.innerHTML = `
@@ -731,6 +799,13 @@ export function mountApp(root) {
       </div>
       ${renderMatchModal()}
     `;
+
+    if (previousScrollTop !== null) {
+      const nextThread = root.querySelector(".chat-thread");
+      if (nextThread) {
+        nextThread.scrollTop = previousScrollTop;
+      }
+    }
 
     bindEvents();
   }

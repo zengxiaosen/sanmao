@@ -6,6 +6,7 @@ import {
   buildCompatibilitySummary,
   buildIcebreakerSuggestions,
   buildRecommendationReasons,
+  createInitialState,
   escapeHtml,
   getLaunchCopy,
   getSeedQualityReport,
@@ -51,6 +52,22 @@ test("compatibility summary stays light and product-facing", () => {
   assert.equal(summary.length > 12, true);
   assert.equal(summary.includes("算法"), false);
   assert.equal(summary.includes("测试"), false);
+});
+
+test("createInitialState starts with an empty draft message", () => {
+  const state = createInitialState();
+
+  assert.equal(state.draftMessage, "");
+});
+
+test("sending an icebreaker should not auto-insert a recipient reply for new chats", () => {
+  const profile = seedProfiles[1];
+  const before = [];
+  const nextThread = [...before, { from: defaultProfile.id, text: "最近在听什么播客？" }];
+
+  assert.equal(nextThread.length, 1);
+  assert.equal(nextThread[0].from, defaultProfile.id);
+  assert.equal(nextThread.some((message) => message.from === profile.id), false);
 });
 
 test("compatibility summary handles missing candidate safely", () => {
