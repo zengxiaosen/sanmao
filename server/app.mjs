@@ -4,7 +4,7 @@ import { createServer } from "node:http";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { generateIcebreakers } from "./visionClient.mjs";
+import { generateIcebreakers, resolveAiProviderConfig } from "./visionClient.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const rootDir = path.resolve(__dirname, "..");
@@ -75,23 +75,27 @@ async function serveStatic(requestPath, response) {
 }
 
 const server = createServer(async (request, response) => {
-  const url = new URL(request.url || "/", `http://${request.headers.host || "localhost"}`);
+  const url = new URL(request.url || "/", "http://localhost");
 
   if (request.method === "POST" && url.pathname === "/api/ai/icebreakers") {
     try {
       const body = await readJsonBody(request);
+      const providerConfig = resolveAiProviderConfig();
       const result = await generateIcebreakers({
         viewerProfile: body.viewerProfile || {},
         candidateProfile: body.candidateProfile || {},
         recentMessages: Array.isArray(body.recentMessages) ? body.recentMessages : [],
-        apiUrl: process.env.VISION_API_URL,
-        apiKey: process.env.VISION_API_KEY
+        apiUrl: providerConfig.apiUrl,
+        apiKey: providerConfig.apiKey
       });
 
       sendJson(response, 200, result);
       return;
     } catch (error) {
-      sendJson(response, error?.message === "body_too_large" ? 413 : 400, {
+      if (error?.message && error.message !== "body_too_large") {
+        console.error("ai_icebreakers_request_failed", error.message);
+      }
+      sendJson(response, error?.message === "body_too_large" ? 413 : 502, {
         suggestions: [],
         fallbackUsed: true,
         source: "fallback"

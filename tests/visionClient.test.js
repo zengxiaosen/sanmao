@@ -5,7 +5,8 @@ import {
   buildIcebreakerPrompt,
   buildVisionRequestBody,
   normalizeIcebreakerResponse,
-  generateIcebreakers
+  generateIcebreakers,
+  resolveAiProviderConfig
 } from "../server/visionClient.mjs";
 import { chatThreads, defaultProfile, seedProfiles } from "../src/data.js";
 
@@ -30,6 +31,30 @@ test("vision request body includes viewer, candidate, and recent thread context"
     candidateProfile,
     recentMessages: []
   }).includes('"suggestions"'), true);
+});
+
+test("resolveAiProviderConfig prefers yxai env vars", () => {
+  assert.deepEqual(resolveAiProviderConfig({
+    YXAI_API_URL: "https://yxai.local/v1/chat/completions",
+    YXAI_API_KEY: "yx-key",
+    VISION_API_URL: "https://vision.example.com",
+    VISION_API_KEY: "vision-key"
+  }), {
+    apiUrl: "https://yxai.local/v1/chat/completions",
+    apiKey: "yx-key",
+    provider: "yxai"
+  });
+});
+
+test("resolveAiProviderConfig falls back to vision env vars", () => {
+  assert.deepEqual(resolveAiProviderConfig({
+    VISION_API_URL: "https://vision.example.com",
+    VISION_API_KEY: "vision-key"
+  }), {
+    apiUrl: "https://vision.example.com",
+    apiKey: "vision-key",
+    provider: "vision"
+  });
 });
 
 test("normalizeIcebreakerResponse keeps three clean unique suggestions from json content", () => {
@@ -82,16 +107,32 @@ test("generateIcebreakers marks fallback when provider output is malformed", asy
   assert.equal(result.source, "fallback");
 });
 
-test("generateIcebreakers returns fallback when env is missing", async () => {
-  const result = await generateIcebreakers({
+test("generateIcebreakers sends bearer auth and request body to yxai-compatible endpoint", async () => {
+  let captured;
+  await generateIcebreakers({
     viewerProfile: defaultProfile,
     candidateProfile: seedProfiles[0],
     recentMessages: [],
-    apiUrl: "",
-    apiKey: ""
+    apiUrl: "https://example.com/yxai",
+    apiKey: "yx-secret",
+    fetchImpl: async (url, options) => {
+      captured = { url, options };
+      return {
+        ok: true,
+        json: async () => ({
+          suggestions: ["第一句建议", "第二句建议", "第三句建议"]
+        })
+      };
+    }
   });
 
-  assert.equal(result.fallbackUsed, true);
-  assert.equal(result.source, "fallback");
-  assert.deepEqual(result.suggestions, []);
+  assert.equal(captured.url, "https://example.com/yxai");
+  assert.equal(captured.options.method, "POST");
+  assert.equal(captured.options.headers.authorization, "Bearer yx-secret");
+  assert.equal(captured.options.headers["content-type"], "application/json");
+  assert.deepEqual(JSON.parse(captured.options.body), buildVisionRequestBody({
+    viewerProfile: defaultProfile,
+    candidateProfile: seedProfiles[0],
+    recentMessages: []
+  }));
 });

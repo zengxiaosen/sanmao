@@ -3,6 +3,17 @@ import { setTimeout as delay } from "node:timers/promises";
 const REQUEST_TIMEOUT_MS = 8000;
 const MAX_SUGGESTIONS = 3;
 
+export function resolveAiProviderConfig(env = process.env) {
+  const apiUrl = env.YXAI_API_URL || env.VISION_API_URL || "";
+  const apiKey = env.YXAI_API_KEY || env.VISION_API_KEY || "";
+
+  return {
+    apiUrl,
+    apiKey,
+    provider: env.YXAI_API_URL || env.YXAI_API_KEY ? "yxai" : env.VISION_API_URL || env.VISION_API_KEY ? "vision" : "fallback"
+  };
+}
+
 function trimTrailingPunctuation(text) {
   return String(text || "")
     .trim()
