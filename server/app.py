@@ -102,6 +102,14 @@ def get_match_demo_mode(other_user_id):
     return is_seed_user_id(other_user_id)
 
 
+def strip_mount_prefix(path):
+    if path == "/meeting":
+        return "/"
+    if path.startswith("/meeting/api/"):
+        return path[len("/meeting") :]
+    return path
+
+
 def json_response(handler, status, payload, headers=None):
     body = json.dumps(payload).encode("utf-8")
     handler.send_response(status)
@@ -861,11 +869,12 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         parsed = urlparse(self.path)
+        normalized_path = strip_mount_prefix(parsed.path)
 
-        if parsed.path == "/api/health":
+        if normalized_path == "/api/health":
             return json_response(self, 200, {"ok": True})
 
-        if parsed.path == "/api/check-username":
+        if normalized_path == "/api/check-username":
             username = parse_qs(parsed.query).get("username", [""])[0].strip()
             if not username:
                 return json_response(self, 400, {"error": "username_required"})
@@ -876,7 +885,7 @@ class Handler(BaseHTTPRequestHandler):
                 return json_response(self, 409, {"error": "username_taken"})
             return json_response(self, 200, {"ok": True})
 
-        if parsed.path == "/api/me":
+        if normalized_path == "/api/me":
             conn = get_conn()
             session_user = get_session_user(self, conn)
             if not session_user:
@@ -893,7 +902,7 @@ class Handler(BaseHTTPRequestHandler):
             conn.close()
             return json_response(self, 200, payload)
 
-        if parsed.path == "/api/state":
+        if normalized_path == "/api/state":
             conn = get_conn()
             session_user = get_session_user(self, conn)
             payload = get_state_payload(conn, session_user["id"] if session_user else None)
@@ -904,7 +913,8 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         parsed = urlparse(self.path)
-        if parsed.path == "/api/guest/start":
+        normalized_path = strip_mount_prefix(parsed.path)
+        if normalized_path == "/api/guest/start":
             if not require_csrf(self):
                 return None
             payload = load_json(self)
@@ -941,7 +951,7 @@ class Handler(BaseHTTPRequestHandler):
                 headers=[("Set-Cookie", build_session_cookie(token, cookie_expires))],
             )
 
-        if self.path == "/api/register":
+        if normalized_path == "/api/register":
             if not require_csrf(self):
                 return None
             payload = load_json(self)
@@ -982,7 +992,7 @@ class Handler(BaseHTTPRequestHandler):
                 headers=[("Set-Cookie", build_session_cookie(token, cookie_expires))],
             )
 
-        if self.path == "/api/login":
+        if normalized_path == "/api/login":
             if not require_csrf(self):
                 return None
             payload = load_json(self)
@@ -1012,7 +1022,7 @@ class Handler(BaseHTTPRequestHandler):
                 headers=[("Set-Cookie", build_session_cookie(token, cookie_expires))],
             )
 
-        if self.path == "/api/logout":
+        if normalized_path == "/api/logout":
             conn, session_user = require_auth(self)
             if not session_user:
                 return None
@@ -1024,7 +1034,7 @@ class Handler(BaseHTTPRequestHandler):
             conn.close()
             return json_response(self, 200, {"ok": True}, headers=[("Set-Cookie", expired_cookie)])
 
-        if self.path == "/api/like":
+        if normalized_path == "/api/like":
             payload = load_json(self)
             conn, session_user = require_auth(self)
             if not session_user:
@@ -1062,7 +1072,7 @@ class Handler(BaseHTTPRequestHandler):
             conn.close()
             return json_response(self, 200, {"matched": bool(match_id), "match_id": match_id})
 
-        if self.path == "/api/ai/icebreakers":
+        if normalized_path == "/api/ai/icebreakers":
             payload = load_json(self)
             conn, session_user = require_auth(self)
             if not session_user:
@@ -1108,7 +1118,7 @@ class Handler(BaseHTTPRequestHandler):
                 build_ai_icebreaker_response(candidate_profile, situation, source="fallback", fallback_used=True),
             )
 
-        if self.path == "/api/ai/icebreaker-click":
+        if normalized_path == "/api/ai/icebreaker-click":
             payload = load_json(self)
             conn, session_user = require_auth(self)
             if not session_user:
@@ -1158,7 +1168,7 @@ class Handler(BaseHTTPRequestHandler):
             conn.close()
             return json_response(self, 201, {"ok": True})
 
-        if parsed.path == "/api/message":
+        if normalized_path == "/api/message":
             payload = load_json(self)
             conn, session_user = require_auth(self)
             if not session_user:
@@ -1235,7 +1245,9 @@ class Handler(BaseHTTPRequestHandler):
         return json_response(self, 404, {"error": "not_found"})
 
     def do_PUT(self):
-        if self.path == "/api/profile":
+        parsed = urlparse(self.path)
+        normalized_path = strip_mount_prefix(parsed.path)
+        if normalized_path == "/api/profile":
             payload = load_json(self)
             conn, session_user = require_auth(self)
             if not session_user:

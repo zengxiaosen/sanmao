@@ -464,8 +464,21 @@ function safeTagList(value) {
     .join("");
 }
 
+export function resolveApiPath(path, locationLike = typeof window !== "undefined" ? window.location : undefined) {
+  if (typeof path !== "string" || !path.startsWith("/api/")) {
+    return path;
+  }
+
+  const pathname = String(locationLike?.pathname || "/");
+  if (pathname === "/meeting" || pathname.startsWith("/meeting/")) {
+    return `/meeting${path}`;
+  }
+
+  return path;
+}
+
 async function apiFetch(path, options = {}) {
-  const response = await fetch(path, {
+  const response = await fetch(resolveApiPath(path), {
     ...options,
     headers: {
       "Content-Type": "application/json",

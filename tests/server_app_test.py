@@ -34,6 +34,9 @@ class StubHandler:
     def end_headers(self):
         pass
 
+    def serve_static(self, path):
+        return server_app.Handler.serve_static(self, path)
+
 
 class AiReplyServerTests(unittest.TestCase):
     def setUp(self):
@@ -206,6 +209,14 @@ class AiReplyServerTests(unittest.TestCase):
         self.assertNotIn("status", discover_profile)
         self.assertNotIn("is_guest", discover_profile)
 
+    def test_static_request_under_meeting_prefix_serves_app_shell(self):
+        handler = StubHandler(method="GET", path="/meeting/")
+        server_app.Handler.do_GET(handler)
+        self.assertEqual(handler.status, 200)
+        html = handler.responses[-1].decode("utf-8")
+        self.assertIn('<script type="module" src="./src/main.js"></script>', html)
+        self.assertIn('<link rel="stylesheet" href="./styles.css">', html)
+
     def test_guest_start_creates_partial_user_and_session(self):
         handler = StubHandler(
             path="/api/guest/start",
@@ -314,6 +325,22 @@ class AiReplyServerTests(unittest.TestCase):
         self.assertIn("demo_mode_copy", match)
         self.assertIn("assistant", match)
         self.assertEqual(match["assistant"]["title"], "AI 恋爱助手")
+
+    def test_meeting_prefixed_api_routes_hit_existing_handlers(self):
+        state_handler = StubHandler(method="GET", path="/meeting/api/state", cookie_header=self.cookie_header)
+        server_app.Handler.do_GET(state_handler)
+        self.assertEqual(state_handler.status, 200)
+        state_payload = json.loads(state_handler.responses[-1].decode("utf-8"))
+        self.assertIn("matches", state_payload)
+
+        message_handler = StubHandler(
+            path="/meeting/api/message",
+            payload={"match_id": self.match_id, "content": "你好"},
+            cookie_header=self.cookie_header,
+        )
+        message_handler.headers["X-CSRF-Token"] = "same-origin"
+        server_app.Handler.do_POST(message_handler)
+        self.assertEqual(message_handler.status, 201)
 
     def test_message_endpoint_does_not_inject_seed_reply_by_default(self):
         handler = StubHandler(

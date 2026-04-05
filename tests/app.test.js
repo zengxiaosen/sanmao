@@ -29,9 +29,24 @@ import {
   buildDistanceHint,
   applyMessagesRerender,
   buildAssistantCardTitle,
-  getDemoModeCopy
+  getDemoModeCopy,
+  resolveApiPath
 } from "../src/app.js";
 import { defaultProfile, seedProfiles } from "../src/data.js";
+
+test("resolveApiPath keeps root api paths at root when app runs at domain root", () => {
+  assert.equal(resolveApiPath("/api/state", { pathname: "/index.html" }), "/api/state");
+});
+
+test("resolveApiPath prefixes api paths when app runs under /meeting", () => {
+  assert.equal(resolveApiPath("/api/state", { pathname: "/meeting/" }), "/meeting/api/state");
+  assert.equal(resolveApiPath("/api/message", { pathname: "/meeting/index.html" }), "/meeting/api/message");
+});
+
+test("resolveApiPath leaves non-root paths unchanged", () => {
+  assert.equal(resolveApiPath("https://example.com/api/state", { pathname: "/meeting/" }), "https://example.com/api/state");
+  assert.equal(resolveApiPath("./local.json", { pathname: "/meeting/" }), "./local.json");
+});
 
 test("createAuthDraft starts with empty auth fields", () => {
   assert.deepEqual(createAuthDraft(), {
