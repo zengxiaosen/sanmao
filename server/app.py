@@ -712,6 +712,9 @@ def get_profile(conn, user_id):
 def get_state_payload(conn, user_id=None):
     profile = get_profile(conn, user_id) if user_id else None
     viewer_id = user_id or -1
+    preferred_gender = None
+    if profile and profile.get("gender") in ("male", "female"):
+        preferred_gender = "female" if profile["gender"] == "male" else "male"
     discover_rows = conn.execute(
         """
         SELECT p.*, u.username, u.status, u.guest_token
@@ -723,9 +726,10 @@ def get_state_payload(conn, user_id=None):
               SELECT to_user_id FROM likes WHERE from_user_id = ?
             )
           )
+          AND (? IS NULL OR p.gender = ?)
         ORDER BY p.user_id
         """,
-        (viewer_id, viewer_id, viewer_id),
+        (viewer_id, viewer_id, viewer_id, preferred_gender, preferred_gender),
     ).fetchall()
 
     liked_rows = []

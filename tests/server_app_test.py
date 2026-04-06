@@ -209,6 +209,54 @@ class AiReplyServerTests(unittest.TestCase):
         self.assertNotIn("status", discover_profile)
         self.assertNotIn("is_guest", discover_profile)
 
+    def test_state_filters_discover_to_opposite_gender_for_authenticated_viewer(self):
+        handler = StubHandler(method="GET", path="/api/state", cookie_header=self.cookie_header)
+        server_app.Handler.do_GET(handler)
+        self.assertEqual(handler.status, 200)
+        payload = json.loads(handler.responses[-1].decode("utf-8"))
+
+        self.assertTrue(payload["discover"])
+        self.assertTrue(all(item["gender"] == "female" for item in payload["discover"]))
+
+    def test_state_filters_discover_to_opposite_gender_for_new_female_user(self):
+        handler = StubHandler(
+            path="/api/register",
+            payload={"username": "femaleviewer", "password": "secret123"},
+        )
+        handler.headers["X-CSRF-Token"] = "same-origin"
+        server_app.Handler.do_POST(handler)
+        self.assertEqual(handler.status, 201)
+        cookie = [value for key, value in handler.sent_headers if key == "Set-Cookie"][0].split(";", 1)[0]
+
+        profile_handler = StubHandler(
+            method="PUT",
+            path="/api/profile",
+            payload={
+                "gender": "female",
+                "avatar_url": "",
+                "name": "Female Viewer",
+                "age": "26",
+                "city": "深圳",
+                "company": "ACME",
+                "role": "设计师",
+                "school": "深大",
+                "tags": "散步/电影",
+                "bio": "完整资料"
+            },
+            cookie_header=cookie,
+        )
+        profile_handler.headers["X-CSRF-Token"] = "same-origin"
+        server_app.Handler.do_PUT(profile_handler)
+        self.assertEqual(profile_handler.status, 200)
+
+        state_handler = StubHandler(method="GET", path="/api/state", cookie_header=cookie)
+        server_app.Handler.do_GET(state_handler)
+        self.assertEqual(state_handler.status, 200)
+        payload = json.loads(state_handler.responses[-1].decode("utf-8"))
+
+        self.assertTrue(payload["discover"])
+        self.assertTrue(all(item["gender"] == "male" for item in payload["discover"]))
+
     def test_static_request_under_meeting_prefix_serves_app_shell(self):
         handler = StubHandler(method="GET", path="/meeting/")
         server_app.Handler.do_GET(handler)
