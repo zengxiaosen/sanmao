@@ -60,13 +60,35 @@ jobs:
           ssh "$ALIYUN_USER@$ALIYUN_HOST" 'set -euo pipefail
           APP_DIR=/var/www/sanmao
           TMP_DIR=/tmp/sanmao-dist
+          RELEASES_DIR=/var/www/sanmao-releases
+          NEXT_RELEASE="$RELEASES_DIR/release-$(date +%Y%m%d%H%M%S)"
+          PREVIOUS_RELEASE="$RELEASES_DIR/previous"
           rm -rf "$TMP_DIR"
-          mkdir -p "$TMP_DIR"
+          mkdir -p "$TMP_DIR" "$RELEASES_DIR"
           tar -xzf /tmp/sanmao-dist.tar.gz -C "$TMP_DIR"
-          rm -rf "$APP_DIR"
-          mkdir -p "$APP_DIR"
-          cp -R "$TMP_DIR"/. "$APP_DIR"/
-          systemctl restart sanmao.service
-          curl --fail --silent http://127.0.0.1/api/health >/dev/null
+          mkdir -p "$NEXT_RELEASE"
+          cp -R "$TMP_DIR"/. "$NEXT_RELEASE"/
+          if [ -d "$APP_DIR" ]; then
+            rm -rf "$PREVIOUS_RELEASE"
+            mv "$APP_DIR" "$PREVIOUS_RELEASE"
+          fi
+          mv "$NEXT_RELEASE" "$APP_DIR"
+          if ! systemctl restart sanmao.service; then
+            rm -rf "$APP_DIR"
+            if [ -d "$PREVIOUS_RELEASE" ]; then
+              mv "$PREVIOUS_RELEASE" "$APP_DIR"
+              systemctl restart sanmao.service
+            fi
+            exit 1
+          fi
+          if ! curl --fail --silent http://127.0.0.1/api/health >/dev/null; then
+            rm -rf "$APP_DIR"
+            if [ -d "$PREVIOUS_RELEASE" ]; then
+              mv "$PREVIOUS_RELEASE" "$APP_DIR"
+              systemctl restart sanmao.service
+            fi
+            exit 1
+          fi
+          rm -rf "$PREVIOUS_RELEASE" "$TMP_DIR"
           '
         shell: bash

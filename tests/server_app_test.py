@@ -209,6 +209,19 @@ class AiReplyServerTests(unittest.TestCase):
         self.assertNotIn("status", discover_profile)
         self.assertNotIn("is_guest", discover_profile)
 
+    def test_authenticated_discover_payload_hides_private_profile_fields(self):
+        handler = StubHandler(method="GET", path="/api/state", cookie_header=self.cookie_header)
+        server_app.Handler.do_GET(handler)
+        self.assertEqual(handler.status, 200)
+        payload = json.loads(handler.responses[-1].decode("utf-8"))
+
+        discover_profile = payload["discover"][0]
+        self.assertIn("name", discover_profile)
+        self.assertNotIn("bio", discover_profile)
+        self.assertNotIn("school", discover_profile)
+        self.assertNotIn("status", discover_profile)
+        self.assertNotIn("is_guest", discover_profile)
+
     def test_state_filters_discover_to_opposite_gender_for_authenticated_viewer(self):
         handler = StubHandler(method="GET", path="/api/state", cookie_header=self.cookie_header)
         server_app.Handler.do_GET(handler)
@@ -217,6 +230,11 @@ class AiReplyServerTests(unittest.TestCase):
 
         self.assertTrue(payload["discover"])
         self.assertTrue(all(item["gender"] == "female" for item in payload["discover"]))
+        discover_profile = payload["discover"][0]
+        self.assertNotIn("bio", discover_profile)
+        self.assertNotIn("school", discover_profile)
+        self.assertNotIn("status", discover_profile)
+        self.assertNotIn("is_guest", discover_profile)
 
     def test_state_filters_discover_to_opposite_gender_for_new_female_user(self):
         handler = StubHandler(

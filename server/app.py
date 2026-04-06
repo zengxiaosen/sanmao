@@ -262,6 +262,7 @@ def row_to_profile(row):
 def row_to_public_discover_profile(row):
     return {
         "user_id": row["user_id"],
+        "gender": row["gender"],
         "avatar_url": row["avatar_url"],
         "name": row["name"],
         "age": row["age"],
@@ -269,6 +270,7 @@ def row_to_public_discover_profile(row):
         "company": row["company"],
         "role": row["role"],
         "tags": row["tags"],
+        "profile_completed": bool(row["profile_completed"]),
     }
 
 
@@ -808,7 +810,7 @@ def get_state_payload(conn, user_id=None):
                 }
             )
 
-    discover_payload = [row_to_profile(row) for row in discover_rows] if user_id else [row_to_public_discover_profile(row) for row in discover_rows]
+    discover_payload = [row_to_public_discover_profile(row) for row in discover_rows]
 
     return {
         "viewer": {
