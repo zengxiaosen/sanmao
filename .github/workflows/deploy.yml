@@ -1,0 +1,95 @@
+name: Deploy to Aliyun
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  test-build-deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run frontend tests
+        run: npm test
+
+      - name: Run backend tests
+        run: python3 -m unittest tests/server_app_test.py
+
+      - name: Build dist
+        run: npm run build
+
+      - name: Setup SSH key
+        env:
+          DEPLOY_KEY: ${{ secrets.ALIYUN_SSH_KEY }}
+          ALIYUN_KNOWN_HOSTS: ${{ secrets.ALIYUN_KNOWN_HOSTS }}
+        run: |
+          mkdir -p ~/.ssh
+          printf '%s\n' "$DEPLOY_KEY" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          printf '%s\n' "$ALIYUN_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          chmod 644 ~/.ssh/known_hosts
+        shell: bash
+
+      - name: Upload dist bundle
+        env:
+          ALIYUN_HOST: ${{ secrets.ALIYUN_HOST }}
+          ALIYUN_USER: ${{ secrets.ALIYUN_USER }}
+        run: |
+          tar -czf dist.tar.gz -C dist .
+          scp dist.tar.gz "$ALIYUN_USER@$ALIYUN_HOST:/tmp/sanmao-dist.tar.gz"
+        shell: bash
+
+      - name: Deploy on server
+        env:
+          ALIYUN_HOST: ${{ secrets.ALIYUN_HOST }}
+          ALIYUN_USER: ${{ secrets.ALIYUN_USER }}
+        run: |
+          ssh "$ALIYUN_USER@$ALIYUN_HOST" 'set -euo pipefail
+          APP_DIR=/var/www/sanmao
+          TMP_DIR=/tmp/sanmao-dist
+          RELEASES_DIR=/var/www/sanmao-releases
+          NEXT_RELEASE="$RELEASES_DIR/release-$(date +%Y%m%d%H%M%S)"
+          PREVIOUS_RELEASE="$RELEASES_DIR/previous"
+          rm -rf "$TMP_DIR"
+          mkdir -p "$TMP_DIR" "$RELEASES_DIR"
+          tar -xzf /tmp/sanmao-dist.tar.gz -C "$TMP_DIR"
+          mkdir -p "$NEXT_RELEASE"
+          cp -R "$TMP_DIR"/. "$NEXT_RELEASE"/
+          if [ -d "$APP_DIR" ]; then
+            rm -rf "$PREVIOUS_RELEASE"
+            mv "$APP_DIR" "$PREVIOUS_RELEASE"
+          fi
+          mv "$NEXT_RELEASE" "$APP_DIR"
+          if ! systemctl restart sanmao.service; then
+            rm -rf "$APP_DIR"
+            if [ -d "$PREVIOUS_RELEASE" ]; then
+              mv "$PREVIOUS_RELEASE" "$APP_DIR"
+              systemctl restart sanmao.service
+            fi
+            exit 1
+          fi
+          if ! curl --fail --silent http://127.0.0.1/api/health >/dev/null; then
+            rm -rf "$APP_DIR"
+            if [ -d "$PREVIOUS_RELEASE" ]; then
+              mv "$PREVIOUS_RELEASE" "$APP_DIR"
+              systemctl restart sanmao.service
+            fi
+            exit 1
+          fi
+          rm -rf "$PREVIOUS_RELEASE" "$TMP_DIR"
+          '
+        shell: bash

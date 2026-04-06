@@ -9,7 +9,10 @@
   --accent-strong: #4f6755;
   --accent-soft: rgba(109, 137, 114, 0.12);
   --danger-soft: rgba(193, 120, 103, 0.14);
+  --rose-soft: rgba(194, 137, 127, 0.12);
+  --gold-soft: rgba(183, 155, 96, 0.18);
   --shadow: 0 26px 80px rgba(53, 42, 32, 0.13);
+  --shadow-soft: 0 18px 42px rgba(53, 42, 32, 0.1);
 }
 
 * {
@@ -23,6 +26,7 @@ body {
   background:
     radial-gradient(circle at top left, rgba(167, 190, 172, 0.36), transparent 32%),
     radial-gradient(circle at 90% 12%, rgba(255, 230, 202, 0.4), transparent 24%),
+    radial-gradient(circle at 50% 100%, rgba(194, 137, 127, 0.16), transparent 30%),
     linear-gradient(180deg, #fbf7f0 0%, var(--bg) 48%, var(--bg-deep) 100%);
 }
 
@@ -100,6 +104,18 @@ img {
   border: 1px solid var(--line);
   backdrop-filter: blur(20px);
   box-shadow: var(--shadow);
+  position: relative;
+  overflow: hidden;
+}
+
+.hero-note::before,
+.panel::before,
+.quota-panel::before {
+  content: "";
+  position: absolute;
+  inset: 0 0 auto;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(255,255,255,0.85), transparent);
 }
 
 .hero-note,
@@ -342,6 +358,18 @@ img {
   transform: translateY(-1px);
 }
 
+.primary-button:focus-visible,
+.ghost-button:focus-visible,
+.text-button:focus-visible,
+.mini-profile:focus-visible,
+.nav-item:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible {
+  outline: 2px solid rgba(109, 137, 114, 0.85);
+  outline-offset: 2px;
+}
+
 .primary-button,
 .ghost-button {
   border: none;
@@ -465,10 +493,98 @@ img {
   border-top: 1px solid var(--line);
 }
 
-.chat-panel {
-  min-height: 560px;
+.detail-block ul {
+  margin: 12px 0 0;
+  padding-left: 18px;
   display: grid;
-  grid-template-rows: auto 1fr auto;
+  gap: 10px;
+}
+
+.detail-block li {
+  color: var(--ink);
+  line-height: 1.75;
+}
+
+.demo-mode-card {
+  border: 1px solid rgba(193, 120, 103, 0.18);
+  background: linear-gradient(180deg, rgba(255,255,255,0.72), rgba(255,246,241,0.92));
+  border-radius: 22px;
+  padding: 18px 18px 6px;
+  box-shadow: var(--shadow-soft);
+}
+
+.demo-mode-card .section-label {
+  color: #9f5c4e;
+}
+
+.icebreaker-situation-card {
+  margin-top: 16px;
+  padding: 18px;
+  border: 1px solid rgba(109, 137, 114, 0.2);
+  border-radius: 24px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.84), rgba(242, 248, 243, 0.84));
+  box-shadow: var(--shadow-soft);
+}
+
+.icebreaker-situation-top {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+  margin-bottom: 10px;
+}
+
+.icebreaker-situation-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+  margin-top: 12px;
+}
+
+.icebreaker-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: start;
+  padding: 15px;
+  border-radius: 20px;
+  background: rgba(255, 255, 255, 0.62);
+  border: 1px solid rgba(28, 25, 22, 0.06);
+  box-shadow: 0 12px 28px rgba(53, 42, 32, 0.05);
+}
+
+.icebreaker-row.selected {
+  border-color: rgba(109, 137, 114, 0.28);
+  background: linear-gradient(180deg, rgba(255,255,255,0.95), rgba(242,248,243,0.92));
+}
+
+.icebreaker-copy {
+  display: grid;
+  gap: 8px;
+}
+
+.icebreaker-copy .ghost-button {
+  justify-self: start;
+  text-align: left;
+}
+
+.messages-shell {
+  display: grid;
+  grid-template-columns: minmax(280px, 360px) minmax(0, 1fr);
+  gap: 22px;
+  align-items: start;
+}
+
+.messages-panel {
+  align-self: start;
+}
+
+.chat-panel {
+  min-height: min(720px, calc(100vh - 170px));
+  max-height: min(720px, calc(100vh - 170px));
+  display: grid;
+  grid-template-rows: auto auto auto 1fr auto;
   gap: 16px;
 }
 
@@ -500,12 +616,14 @@ img {
 
 .bubble.theirs {
   background: rgba(28, 25, 22, 0.08);
+  border-top-left-radius: 10px;
 }
 
 .bubble.mine {
   justify-self: end;
-  background: var(--accent);
+  background: linear-gradient(135deg, var(--accent), var(--accent-strong));
   color: #faf6ef;
+  border-top-right-radius: 10px;
 }
 
 .chat-composer {
@@ -630,7 +748,9 @@ textarea {
 
   .chat-composer,
   .actions,
-  .modal-actions {
+  .modal-actions,
+  .icebreaker-situation-grid,
+  .icebreaker-row {
     grid-template-columns: 1fr;
   }
 

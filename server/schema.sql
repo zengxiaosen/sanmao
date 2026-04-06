@@ -1,7 +1,9 @@
 CREATE TABLE IF NOT EXISTS users (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
-  username TEXT NOT NULL UNIQUE,
+  username TEXT UNIQUE,
   password_hash TEXT NOT NULL DEFAULT '',
+  guest_token TEXT UNIQUE,
+  status TEXT NOT NULL DEFAULT 'complete',
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -51,4 +53,16 @@ CREATE TABLE IF NOT EXISTS messages (
   sender_id INTEGER NOT NULL,
   content TEXT NOT NULL,
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS ai_suggestion_clicks (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER NOT NULL,
+  match_id INTEGER NOT NULL,
+  suggestion_id TEXT NOT NULL,
+  action TEXT NOT NULL,
+  stage TEXT,
+  intent TEXT,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY(user_id) REFERENCES users(id)
 );
