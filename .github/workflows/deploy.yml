@@ -35,12 +35,13 @@ jobs:
       - name: Setup SSH key
         env:
           DEPLOY_KEY: ${{ secrets.ALIYUN_SSH_KEY }}
-          ALIYUN_HOST: ${{ secrets.ALIYUN_HOST }}
+          ALIYUN_KNOWN_HOSTS: ${{ secrets.ALIYUN_KNOWN_HOSTS }}
         run: |
           mkdir -p ~/.ssh
           printf '%s\n' "$DEPLOY_KEY" > ~/.ssh/id_ed25519
           chmod 600 ~/.ssh/id_ed25519
-          ssh-keyscan -H "$ALIYUN_HOST" >> ~/.ssh/known_hosts
+          printf '%s\n' "$ALIYUN_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          chmod 644 ~/.ssh/known_hosts
         shell: bash
 
       - name: Upload dist bundle
