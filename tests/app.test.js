@@ -247,7 +247,7 @@ test("recommendation reasons reflect opposite-gender matching baseline for guest
   assert.equal(defaultProfile.gender, "male");
 });
 
-test("guest like increments viewed count and skips matched card after success", async () => {
+test("discover like increments viewed count and skips matched card after success", async () => {
   const persistCalls = [];
   let refreshCalls = 0;
   const state = {

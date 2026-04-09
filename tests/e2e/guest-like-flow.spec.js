@@ -1,6 +1,6 @@
 import { test, expect } from "@playwright/test";
 
-test("guest like flow opens onboarding and advances discover after success", async ({ page }) => {
+test("guest like flow opens onboarding and preserves current liked-by state", async ({ page }) => {
   await page.addInitScript(() => {
     window.localStorage.removeItem("sanmao-state");
   });
