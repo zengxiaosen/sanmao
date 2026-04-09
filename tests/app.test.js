@@ -15,9 +15,13 @@ import {
   getMessagesPanelMarkup,
   getScrollRestorePlan,
   getSeedQualityReport,
+  handleLikeAction,
+  hydrateAuthFromAppData,
   mergeLatestMessagesIntoAppData,
+  mountApp,
   openMatchProfile,
   recordIcebreakerClick,
+  renderLikedMarkup,
   resetAuthDraftPassword,
   resolveIcebreakerSuggestions,
   setAuthDraftField,
@@ -188,16 +192,246 @@ test("createInitialState starts with stable empty app state plus guest and ai st
   });
 });
 
-test("guest like modal only opens for unauthenticated first-like flow", () => {
-  const state = createInitialState();
+test("messages panel markup should show mutual-like state instead of repeat like action", () => {
+  const state = {
+    ...createInitialState(),
+    ui: {
+      ...createInitialState().ui,
+      activeTab: "liked"
+    },
+    appData: {
+      profile: { user_id: 2001, profile_completed: true },
+      discover: [],
+      liked: [],
+      liked_by: [
+        {
+          user_id: 1001,
+          name: "林清禾",
+          company: "腾讯",
+          role: "产品经理",
+          avatar_url: "https://example.com/a.jpg"
+        }
+      ],
+      matches: [
+        {
+          match_id: 3001,
+          other: {
+            user_id: 1001,
+            name: "林清禾",
+            company: "腾讯",
+            role: "产品经理",
+            avatar_url: "https://example.com/a.jpg"
+          },
+          messages: []
+        }
+      ]
+    }
+  };
+
+  const markup = renderLikedMarkup(state);
+
+  assert.equal(markup.includes("回赞"), false);
+  assert.equal(markup.includes("已经互相喜欢") || markup.includes("已互相喜欢"), true);
+});
+
+test("guest onboarding copy asks for gender before browsing recommendations", () => {
+  const copy = getLaunchCopy();
+  const serialized = JSON.stringify(copy);
+
+  assert.equal(serialized.includes("先选你的性别"), true);
+  assert.equal(serialized.includes("我是男生") || serialized.includes("我是女生"), true);
+});
+
+test("recommendation reasons reflect opposite-gender matching baseline for guests", () => {
+  assert.equal(seedProfiles.every((profile) => profile.gender === "female"), true);
+  assert.equal(defaultProfile.gender, "male");
+});
+
+test("guest like increments viewed count and skips matched card after success", async () => {
+  const persistCalls = [];
+  let refreshCalls = 0;
+  const state = {
+    ...createInitialState(),
+    auth: {
+      ...createInitialState().auth,
+      authenticated: true,
+      checkingSession: false
+    },
+    appData: {
+      profile: { user_id: 2001, gender: "male", profile_completed: true },
+      discover: [
+        { user_id: 1001, name: "林清禾", gender: "female" },
+        { user_id: 1002, name: "周以宁", gender: "female" }
+      ],
+      liked: [],
+      liked_by: [],
+      matches: []
+    }
+  };
+
+  const nextState = await handleLikeAction({
+    state,
+    userId: 1001,
+    source: "discover",
+    likeRequest: async () => {},
+    refreshAppData: async () => {
+      refreshCalls += 1;
+    },
+    persist: (next) => {
+      persistCalls.push(next);
+    }
+  });
+
+  assert.equal(refreshCalls, 1);
+  assert.equal(persistCalls.length, 1);
+  assert.equal(nextState.local.viewedCount, 1);
+  assert.deepEqual(nextState.local.skippedIds, [1001]);
+});
+
+test("liked-by callback should not consume discover quota or skip current card", async () => {
+  const persistCalls = [];
+  let refreshCalls = 0;
+  const state = {
+    ...createInitialState(),
+    auth: {
+      ...createInitialState().auth,
+      authenticated: true,
+      checkingSession: false
+    },
+    appData: {
+      profile: { user_id: 2001, gender: "male", profile_completed: true },
+      discover: [
+        { user_id: 1001, name: "林清禾", gender: "female" },
+        { user_id: 1002, name: "周以宁", gender: "female" }
+      ],
+      liked: [],
+      liked_by: [{ user_id: 1003, name: "陈星野", gender: "female" }],
+      matches: []
+    }
+  };
+
+  const nextState = await handleLikeAction({
+    state,
+    userId: 1003,
+    source: "liked_by",
+    likeRequest: async () => {},
+    refreshAppData: async () => {
+      refreshCalls += 1;
+    },
+    persist: (next) => {
+      persistCalls.push(next);
+    }
+  });
+
+  assert.equal(refreshCalls, 1);
+  assert.equal(persistCalls.length, 1);
+  assert.equal(nextState.local.viewedCount, 0);
+  assert.deepEqual(nextState.local.skippedIds, []);
+});
+
+test("hydrateAuthFromAppData keeps visitor sessions unauthenticated", () => {
+  const state = {
+    ...createInitialState(),
+    auth: {
+      ...createInitialState().auth,
+      checkingSession: true,
+      authenticated: false,
+      username: ""
+    },
+    ui: {
+      ...createInitialState().ui,
+      usernameInput: ""
+    }
+  };
+  const appData = {
+    viewer: {
+      authenticated: false,
+      status: "visitor",
+      is_guest: false
+    },
+    profile: null,
+    discover: [],
+    liked: [],
+    liked_by: [],
+    matches: []
+  };
+
+  const nextAuth = hydrateAuthFromAppData(state, appData);
+
+  assert.equal(nextAuth.authenticated, false);
+  assert.equal(nextAuth.checkingSession, false);
+  assert.equal(nextAuth.userId, null);
+});
+
+test("guest like modal stays hidden for authenticated users with stale modal flag", () => {
+  const state = {
+    ...createInitialState(),
+    auth: {
+      ...createInitialState().auth,
+      authenticated: true,
+      checkingSession: false
+    },
+    ui: {
+      ...createInitialState().ui,
+      guestModalOpen: true
+    }
+  };
+
   assert.equal(shouldRenderGuestLikeModal(state), false);
-  assert.equal(
-    shouldRenderGuestLikeModal({
-      ...state,
-      ui: { ...state.ui, guestModalOpen: true }
-    }),
-    true
-  );
+});
+
+test("guest like modal opens when like receives unauthorized", async () => {
+  const state = {
+    ...createInitialState(),
+    auth: {
+      ...createInitialState().auth,
+      authenticated: true,
+      checkingSession: false
+    },
+    ui: {
+      ...createInitialState().ui,
+      guestModalOpen: false,
+      guestError: "old"
+    }
+  };
+
+  const nextState = await handleLikeAction({
+    state,
+    userId: 1001,
+    likeRequest: async () => {
+      throw new Error("unauthorized");
+    },
+    refreshAppData: async () => {
+      throw new Error("should_not_refresh");
+    },
+    persist: () => {}
+  });
+
+  assert.equal(nextState.pendingLikeUserId, 1001);
+  assert.equal(nextState.ui.guestModalOpen, true);
+  assert.equal(nextState.ui.guestError, "");
+  assert.equal(nextState.auth.authenticated, true);
+  assert.equal(shouldRenderGuestLikeModal(nextState), false);
+});
+
+test("guest like modal opens immediately for unauthenticated viewers", async () => {
+  const state = createInitialState();
+
+  const nextState = await handleLikeAction({
+    state,
+    userId: 1002,
+    likeRequest: async () => {
+      throw new Error("should_not_call_like_api");
+    },
+    refreshAppData: async () => {
+      throw new Error("should_not_refresh");
+    },
+    persist: () => {}
+  });
+
+  assert.equal(nextState.pendingLikeUserId, 1002);
+  assert.equal(nextState.ui.guestModalOpen, true);
+  assert.equal(nextState.ui.guestError, "");
 });
 
 test("canSendMessages requires completed profile", () => {
@@ -215,6 +449,32 @@ test("canSendMessages requires completed profile", () => {
 test("openMatchProfile stores selected profile id", () => {
   const state = createInitialState();
   assert.equal(openMatchProfile(state, 1001).ui.selectedProfileUserId, 1001);
+});
+
+test("switching tabs should clear selected profile drawer state", () => {
+  const state = {
+    ...createInitialState(),
+    ui: {
+      ...createInitialState().ui,
+      activeTab: "messages",
+      selectedProfileUserId: 1001,
+      editingProfile: true
+    }
+  };
+
+  const nextState = {
+    ...state,
+    ui: {
+      ...state.ui,
+      activeTab: "discover",
+      editingProfile: false,
+      selectedProfileUserId: null
+    }
+  };
+
+  assert.equal(nextState.ui.activeTab, "discover");
+  assert.equal(nextState.ui.editingProfile, false);
+  assert.equal(nextState.ui.selectedProfileUserId, null);
 });
 
 test("launch copy presents demo helpers honestly", () => {

@@ -324,6 +324,66 @@ export function sanitizeImageUrl(value) {
   }
 }
 
+export function renderLikedMarkup(state) {
+  const copy = getLaunchCopy();
+  const liked = state.appData?.liked || [];
+  const likedBy = state.appData?.liked_by || [];
+  const matchedUserIds = new Set((state.appData?.matches || []).map((match) => Number(match?.other?.user_id)).filter(Boolean));
+
+  return `
+      <section class="panel app-card">
+        <div class="section-label">${copy.likedLabel}</div>
+        <h2>我喜欢的人</h2>
+        ${
+          liked.length
+            ? `<div class="mini-list">
+                ${liked
+                  .map(
+                    (profile) => `
+                      <div class="mini-profile static-card">
+                        <img src="${safeImageAttr(profile.avatar_url)}" alt="${escapeAttribute(profile.name)}">
+                        <div>
+                          <strong>${safeText(profile.name)}</strong>
+                          <span>${safeText(profile.company, "未填公司")} · ${safeText(profile.role, "未填职业")}</span>
+                        </div>
+                      </div>
+                    `
+                  )
+                  .join("")}
+              </div>`
+            : `<p class="panel-copy">你还没有主动喜欢过任何人。</p>`
+        }
+      </section>
+      <section class="panel app-card">
+        <div class="section-label">${copy.likedByLabel}</div>
+        <h2>喜欢我的人</h2>
+        ${
+          likedBy.length
+            ? `<div class="mini-list">
+                ${likedBy
+                  .map((profile) => {
+                    const isMutual = matchedUserIds.has(Number(profile.user_id));
+                    return `
+                      <div class="mini-profile static-card">
+                        <img src="${safeImageAttr(profile.avatar_url)}" alt="${escapeAttribute(profile.name)}">
+                        <div>
+                          <strong>${safeText(profile.name)}</strong>
+                          <span>${safeText(profile.company, "未填公司")} · ${safeText(profile.role, "未填职业")}</span>
+                        </div>
+                        ${isMutual
+                          ? `<span class="section-label">已经互相喜欢</span>`
+                          : `<button class="primary-button small-button" data-action="like-user" data-like-source="liked_by" data-user-id="${profile.user_id}">回赞</button>`}
+                      </div>
+                    `;
+                  })
+                  .join("")}
+              </div>`
+            : `<p class="panel-copy">${copy.likedByEmpty}</p>`
+        }
+      </section>
+    `;
+}
+
 export function createInitialState() {
   return {
     auth: {
@@ -420,7 +480,8 @@ export function getLaunchCopy() {
     heroBody: "先留下名字，合适的时候再慢慢补完整资料，轻一点开始，真一点聊天。",
     heroNoteLabel: "轻一点开始",
     heroNoteTitle: "先进入看看，再决定怎么介绍自己。",
-    heroNoteBody: "发现、喜欢、消息和我的四个页签，会陪你把认识一个人的过程慢慢走完。当前 demo 只用于展示产品体验，不会伪装成真人在线聊天。",
+    heroNoteBody: "进入推荐前先选你的性别。发现、喜欢、消息和我的四个页签，会陪你把认识一个人的过程慢慢走完。当前 demo 只用于展示产品体验，不会伪装成真人在线聊天。",
+    heroNoteChoices: "我是男生 / 我是女生",
     authStepLabel: "开始",
     authRegisterTitle: "创建你的 Sanmao 账号",
     authLoginTitle: "欢迎回来",
@@ -526,6 +587,69 @@ export async function recordIcebreakerClick({ matchId, suggestionId, action, sta
 
 export function shouldRenderGuestLikeModal(state) {
   return Boolean(!state.auth.authenticated && state.ui.guestModalOpen);
+}
+
+export async function handleLikeAction({
+  state,
+  userId,
+  source = "discover",
+  likeRequest,
+  refreshAppData = async () => {},
+  persist = () => {}
+}) {
+  const openGuestModalState = {
+    ...state,
+    pendingLikeUserId: Number(userId),
+    ui: {
+      ...state.ui,
+      guestModalOpen: true,
+      guestError: ""
+    }
+  };
+
+  if (!state.auth.authenticated) {
+    return openGuestModalState;
+  }
+
+  try {
+    await likeRequest(Number(userId));
+  } catch (error) {
+    if (error?.message === "unauthorized") {
+      return openGuestModalState;
+    }
+    throw error;
+  }
+
+  const shouldAdvanceDiscover = source === "discover";
+  const nextState = {
+    ...state,
+    local: {
+      ...state.local,
+      viewedCount: state.local.viewedCount + (shouldAdvanceDiscover ? 1 : 0),
+      skippedIds: shouldAdvanceDiscover
+        ? [...state.local.skippedIds, Number(userId)]
+        : state.local.skippedIds
+    }
+  };
+  persist(nextState);
+  await refreshAppData();
+  return nextState;
+}
+
+export function hydrateAuthFromAppData(state, appData) {
+  const viewer = appData?.viewer || {};
+  const authenticated = Boolean(viewer.authenticated && appData?.profile?.user_id);
+  const username = appData?.profile?.username || (authenticated ? state.auth.username : "");
+
+  return {
+    ...state.auth,
+    userId: authenticated ? appData.profile.user_id : null,
+    authenticated,
+    checkingSession: false,
+    username,
+    status: viewer.status || (authenticated ? state.auth.status : "visitor"),
+    isGuest: Boolean(viewer.is_guest)
+  };
 }
 
 export function canSendMessages(state) {
@@ -807,13 +931,7 @@ export function mountApp(root) {
         ...state,
         appData,
         loading: false,
-        auth: {
-          ...state.auth,
-          userId: appData.profile?.user_id ?? state.auth.userId,
-          authenticated: true,
-          checkingSession: false,
-          username: appData.profile?.username || state.auth.username
-        },
+        auth: hydrateAuthFromAppData(state, appData),
         ui: {
           ...state.ui,
           usernameInput: appData.profile?.username || state.ui.usernameInput,
@@ -1091,59 +1209,7 @@ export function mountApp(root) {
   }
 
   function renderLiked() {
-    const copy = getLaunchCopy();
-    const liked = state.appData?.liked || [];
-    const likedBy = state.appData?.liked_by || [];
-
-    return `
-      <section class="panel app-card">
-        <div class="section-label">${copy.likedLabel}</div>
-        <h2>我喜欢的人</h2>
-        ${
-          liked.length
-            ? `<div class="mini-list">
-                ${liked
-                  .map(
-                    (profile) => `
-                      <div class="mini-profile static-card">
-                        <img src="${safeImageAttr(profile.avatar_url)}" alt="${escapeAttribute(profile.name)}">
-                        <div>
-                          <strong>${safeText(profile.name)}</strong>
-                          <span>${safeText(profile.company, "未填公司")} · ${safeText(profile.role, "未填职业")}</span>
-                        </div>
-                      </div>
-                    `
-                  )
-                  .join("")}
-              </div>`
-            : `<p class="panel-copy">你还没有主动喜欢过任何人。</p>`
-        }
-      </section>
-      <section class="panel app-card">
-        <div class="section-label">${copy.likedByLabel}</div>
-        <h2>喜欢我的人</h2>
-        ${
-          likedBy.length
-            ? `<div class="mini-list">
-                ${likedBy
-                  .map(
-                    (profile) => `
-                      <div class="mini-profile static-card">
-                        <img src="${safeImageAttr(profile.avatar_url)}" alt="${escapeAttribute(profile.name)}">
-                        <div>
-                          <strong>${safeText(profile.name)}</strong>
-                          <span>${safeText(profile.company, "未填公司")} · ${safeText(profile.role, "未填职业")}</span>
-                        </div>
-                        <button class="primary-button small-button" data-action="like-user" data-user-id="${profile.user_id}">回赞</button>
-                      </div>
-                    `
-                  )
-                  .join("")}
-              </div>`
-            : `<p class="panel-copy">${copy.likedByEmpty}</p>`
-        }
-      </section>
-    `;
+    return renderLikedMarkup(state);
   }
 
   function renderMessages() {
@@ -1683,36 +1749,26 @@ export function mountApp(root) {
     }
   }
 
-  async function handleLike(userId) {
-    if (!state.auth.authenticated) {
-      setState({
-        ...state,
-        pendingLikeUserId: Number(userId),
-        ui: {
-          ...state.ui,
-          guestModalOpen: true,
-          guestError: ""
-        }
-      });
-      return;
-    }
-
-    await apiFetch("/api/like", {
-      method: "POST",
-      body: JSON.stringify({
-        target_user_id: Number(userId)
-      })
+  async function handleLike(userId, source = "discover") {
+    const nextState = await handleLikeAction({
+      state,
+      userId,
+      source,
+      likeRequest: (resolvedUserId) =>
+        apiFetch("/api/like", {
+          method: "POST",
+          body: JSON.stringify({
+            target_user_id: Number(resolvedUserId)
+          })
+        }),
+      refreshAppData,
+      persist: (nextPersistedState) => {
+        state = nextPersistedState;
+        persist();
+      }
     });
 
-    state = {
-      ...state,
-      local: {
-        ...state.local,
-        viewedCount: state.local.viewedCount + 1
-      }
-    };
-    persist();
-    await refreshAppData();
+    setState(nextState);
   }
 
   async function handleGuestStart(event) {
@@ -1792,32 +1848,62 @@ export function mountApp(root) {
   async function handleProfileSave(event) {
     event.preventDefault();
     const formData = new FormData(event.currentTarget);
+    const nextProfile = {
+      gender: String(formData.get("gender")),
+      avatar_url: "",
+      name: String(formData.get("name")),
+      age: String(formData.get("age")),
+      city: String(formData.get("city")),
+      company: String(formData.get("company")),
+      role: String(formData.get("role")),
+      school: String(formData.get("school")),
+      tags: String(formData.get("tags")),
+      bio: String(formData.get("bio"))
+    };
     try {
       await apiFetch("/api/profile", {
         method: "PUT",
-        body: JSON.stringify({
-          gender: String(formData.get("gender")),
-          avatar_url: "",
-          name: String(formData.get("name")),
-          age: String(formData.get("age")),
-          city: String(formData.get("city")),
-          company: String(formData.get("company")),
-          role: String(formData.get("role")),
-          school: String(formData.get("school")),
-          tags: String(formData.get("tags")),
-          bio: String(formData.get("bio"))
-        })
+        body: JSON.stringify(nextProfile)
       });
+
+      const mergedAppData = state.appData
+        ? {
+            ...state.appData,
+            profile: state.appData.profile
+              ? {
+                  ...state.appData.profile,
+                  ...nextProfile,
+                  profile_completed: true
+                }
+              : state.appData.profile
+          }
+        : state.appData;
+      const optimisticAuth = mergedAppData
+        ? hydrateAuthFromAppData(state, {
+            ...mergedAppData,
+            viewer: {
+              ...(mergedAppData.viewer || {}),
+              authenticated: true,
+              user_id: mergedAppData.profile?.user_id,
+              status: "complete",
+              is_guest: false
+            }
+          })
+        : state.auth;
 
       state = {
         ...state,
+        appData: mergedAppData,
+        auth: optimisticAuth,
         ui: {
           ...state.ui,
           editingProfile: false,
-          profileError: ""
+          profileError: "",
+          activeTab: "messages"
         }
       };
       persist();
+      rerenderMessagesView();
       await refreshAppData();
     } catch {
       setState({
@@ -1829,6 +1915,7 @@ export function mountApp(root) {
       });
     }
   }
+
 
   async function handleLogout() {
     try {
@@ -2064,7 +2151,8 @@ export function mountApp(root) {
           ui: {
             ...state.ui,
             activeTab: button.dataset.tab,
-            editingProfile: false
+            editingProfile: false,
+            selectedProfileUserId: null
           }
         });
       });
@@ -2085,7 +2173,7 @@ export function mountApp(root) {
 
     root.querySelectorAll("[data-action='like-user']").forEach((button) => {
       button.addEventListener("click", () => {
-        handleLike(button.dataset.userId);
+        handleLike(button.dataset.userId, button.dataset.likeSource || "discover");
       });
     });
 

@@ -1,6 +1,6 @@
 import { test, expect } from "@playwright/test";
 
-test("profile completion flow returns to messages with gating state visible", async ({ page }) => {
+test("profile completion keeps chat gated until backend state turns complete", async ({ page }) => {
   await page.addInitScript(() => {
     window.localStorage.setItem(
       "sanmao-state",
@@ -87,6 +87,19 @@ test("profile completion flow returns to messages with gating state visible", as
     });
   });
 
+  await page.route("**/api/message", async (route) => {
+    const body = JSON.parse(route.request().postData() || "{}");
+    activeMessages = [
+      ...activeMessages,
+      { sender_id: 9001, content: body.content, created_at: "2026-04-05T00:00:01" }
+    ];
+    await route.fulfill({
+      status: 201,
+      contentType: "application/json",
+      body: JSON.stringify({ messages: activeMessages })
+    });
+  });
+
   await page.goto("/index.html");
 
   await expect(page.locator("text=先去“我的”里补完整资料，再回来发第一条消息。")).toBeVisible();
@@ -107,7 +120,7 @@ test("profile completion flow returns to messages with gating state visible", as
   await page.getByRole("button", { name: "保存资料" }).click();
 
   await expect(page.locator("form#profile-form")).toHaveCount(0);
-  await expect(page.getByRole("heading", { name: "消息" })).toBeVisible();
+  await page.getByRole("button", { name: "消息" }).click();
   await expect(page.locator("text=先去“我的”里补完整资料，再回来发第一条消息。")).toBeVisible();
   await expect(page.locator("#chat-input")).toHaveCount(0);
 });
