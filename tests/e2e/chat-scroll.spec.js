@@ -44,11 +44,18 @@ test("sending a message does not jump page back to hero", async ({ page }) => {
       status: 200,
       contentType: "application/json",
       body: JSON.stringify({
+        viewer: {
+          authenticated: true,
+          user_id: 99,
+          status: "complete",
+          is_guest: false
+        },
         profile: {
           user_id: 99,
           username: "tester",
           name: "Tester",
           gender: "male",
+          age: 28,
           city: "深圳",
           company: "ACME",
           role: "工程师",
@@ -99,7 +106,7 @@ test("sending a message does not jump page back to hero", async ({ page }) => {
   });
 
   await page.goto("/index.html");
-  await page.waitForSelector("#chat-form");
+  await expect(page.locator("#chat-form")).toBeVisible();
 
   await page.evaluate(() => window.scrollTo(0, 900));
   const beforeY = await page.evaluate(() => window.scrollY);
