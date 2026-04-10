@@ -2079,6 +2079,11 @@ export function mountApp(root) {
       guestStartForm.addEventListener("submit", handleGuestStart);
     }
 
+    const profileForm = root.querySelector("#profile-form");
+    if (profileForm) {
+      profileForm.addEventListener("submit", handleProfileSave);
+    }
+
     const chatForm = root.querySelector("#chat-form");
     if (chatForm) {
       chatForm.addEventListener("submit", handleSendMessage);

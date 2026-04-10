@@ -2,6 +2,9 @@ import { test, expect } from "@playwright/test";
 
 test("sending a message does not jump page back to hero", async ({ page }) => {
   const scrollTelemetry = [];
+  let activeMessages = [
+    { sender_id: 1001, content: "hi", created_at: "2026-04-05T00:00:00" }
+  ];
 
   await page.addInitScript(() => {
     const seededState = {
@@ -80,10 +83,7 @@ test("sending a message does not jump page back to hero", async ({ page }) => {
               prompt: "喜欢慢节奏周末",
               tags: ["散步", "咖啡"]
             },
-            assistant: { title: "AI 恋爱助手" },
-            messages: [
-              { sender_id: 1001, content: "hi", created_at: "2026-04-05T00:00:00" }
-            ]
+            messages: activeMessages
           }
         ]
       })
@@ -93,19 +93,19 @@ test("sending a message does not jump page back to hero", async ({ page }) => {
   await page.route("**/api/message", async (route) => {
     const request = route.request();
     const body = JSON.parse(request.postData() || "{}");
+    activeMessages = [
+      ...activeMessages,
+      { sender_id: 99, content: body.content, created_at: "2026-04-05T00:00:01" }
+    ];
     await route.fulfill({
       status: 201,
       contentType: "application/json",
-      body: JSON.stringify({
-        messages: [
-          { sender_id: 1001, content: "hi", created_at: "2026-04-05T00:00:00" },
-          { sender_id: 99, content: body.content, created_at: "2026-04-05T00:00:01" }
-        ]
-      })
+      body: JSON.stringify({ messages: activeMessages })
     });
   });
 
   await page.goto("/index.html");
+  await expect(page.locator(".embedded-thread")).toBeVisible();
   await expect(page.locator("#chat-form")).toBeVisible();
 
   await page.evaluate(() => window.scrollTo(0, 900));
