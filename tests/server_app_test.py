@@ -305,6 +305,55 @@ class AiReplyServerTests(unittest.TestCase):
         self.assertEqual(row["gender"], "female")
         self.assertEqual(row["profile_completed"], 0)
 
+    def test_profile_completion_clears_guest_flag_and_unlocks_state(self):
+        guest_handler = StubHandler(
+            path="/api/guest/start",
+            payload={"gender": "male", "name": "GuestComplete"},
+        )
+        guest_handler.headers["X-CSRF-Token"] = "same-origin"
+        server_app.Handler.do_POST(guest_handler)
+        self.assertEqual(guest_handler.status, 201)
+        guest_cookie = [value for key, value in guest_handler.sent_headers if key == "Set-Cookie"][0].split(";", 1)[0]
+
+        profile_handler = StubHandler(
+            method="PUT",
+            path="/api/profile",
+            payload={
+                "gender": "male",
+                "avatar_url": "",
+                "name": "GuestComplete",
+                "age": "28",
+                "city": "深圳",
+                "company": "ACME",
+                "role": "工程师",
+                "school": "深大",
+                "tags": "散步/咖啡",
+                "bio": "完整资料"
+            },
+            cookie_header=guest_cookie,
+        )
+        profile_handler.headers["X-CSRF-Token"] = "same-origin"
+        server_app.Handler.do_PUT(profile_handler)
+        self.assertEqual(profile_handler.status, 200)
+
+        conn = get_conn()
+        row = conn.execute(
+            "SELECT u.status, u.guest_token, p.profile_completed FROM users u JOIN profiles p ON p.user_id = u.id WHERE p.name = ?",
+            ("GuestComplete",),
+        ).fetchone()
+        conn.close()
+        self.assertEqual(row["status"], "complete")
+        self.assertFalse(row["guest_token"])
+        self.assertEqual(row["profile_completed"], 1)
+
+        state_handler = StubHandler(method="GET", path="/api/state", cookie_header=guest_cookie)
+        server_app.Handler.do_GET(state_handler)
+        self.assertEqual(state_handler.status, 200)
+        payload = json.loads(state_handler.responses[-1].decode("utf-8"))
+        self.assertEqual(payload["viewer"]["status"], "complete")
+        self.assertEqual(payload["viewer"]["is_guest"], False)
+        self.assertEqual(payload["profile"]["profile_completed"], True)
+
     def test_like_requires_auth_even_with_guest_funnel(self):
         handler = StubHandler(
             path="/api/like",

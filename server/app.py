@@ -1304,8 +1304,8 @@ class Handler(BaseHTTPRequestHandler):
                 ),
             )
             conn.execute(
-                "UPDATE users SET status = ? WHERE id = ?",
-                ("complete" if profile_completed else "partial", user_id),
+                "UPDATE users SET status = ?, guest_token = ? WHERE id = ?",
+                ("complete" if profile_completed else "partial", None if profile_completed else session_user.get("guest_token"), user_id),
             )
             conn.commit()
             conn.close()
